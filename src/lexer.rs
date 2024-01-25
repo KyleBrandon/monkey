@@ -1,6 +1,4 @@
-use tracing::info;
-
-use crate::monkey::token::TokenType;
+use crate::token::TokenType;
 
 use super::token::Token;
 

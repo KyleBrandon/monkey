@@ -1,6 +1,6 @@
 use std::io::stdin;
 
-use crate::monkey::{lexer::Lexer, token::TokenType};
+use crate::{lexer::Lexer, token::TokenType};
 
 pub fn start_repl() {
     loop {
