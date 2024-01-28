@@ -1,6 +1,4 @@
-use crate::token::TokenType;
-
-use super::token::Token;
+use crate::token::{Token, TokenType};
 
 pub struct Lexer {
     input: String,
@@ -196,7 +194,6 @@ impl Lexer {
 //
 #[cfg(test)]
 mod tests {
-    use crate::monkey::token::TokenType;
 
     use super::*;
     #[test]
@@ -303,7 +300,7 @@ if (5 < 10) {
             (TokenType::NotEqual, "!="),
             (TokenType::Int, "9"),
             (TokenType::Semicolon, ";"),
-            (TokenType::Eof, ""),
+            (TokenType::EOF, ""),
         ];
 
         let mut lexer = Lexer::new(input.to_string());
