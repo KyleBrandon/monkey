@@ -1,6 +1,4 @@
-use std::{net::ToSocketAddrs, ptr::write_unaligned};
-
-use tracing::info;
+use tracing::{error, info};
 
 use crate::{
     ast::node::{Identifier, LetStatement, Node, Program},
@@ -8,16 +6,21 @@ use crate::{
     token::{Token, TokenType},
 };
 
-struct Parser {
+pub struct Parser {
     lexer: Lexer,
     curr_token: Option<Token>,
     peek_token: Option<Token>,
+
+    errors: Vec<String>,
 }
 
-struct ParserError {}
+#[derive(Debug)]
+pub struct ParserError {
+    pub errors: Vec<String>,
+}
 
 impl Parser {
-    fn new(lexer: Lexer) -> Self {
+    pub fn new(lexer: Lexer) -> Self {
         let mut l = lexer;
         let curr_token = l.next_token();
         let peek_token = l.next_token();
@@ -25,15 +28,15 @@ impl Parser {
             lexer: l,
             curr_token: Some(curr_token),
             peek_token: Some(peek_token),
+            errors: Vec::new(),
         }
     }
 
-    fn next_token(&mut self) {
-        self.curr_token = self.peek_token.take();
-        self.peek_token = Some(self.lexer.next_token());
+    pub fn errors(&self) -> &Vec<String> {
+        &self.errors
     }
 
-    fn parse_program(&mut self) -> Result<Program, ParserError> {
+    pub fn parse_program(&mut self) -> Result<Program, ParserError> {
         let mut program = Program::new();
 
         while let Some(tt) = &self.curr_token {
@@ -51,7 +54,29 @@ impl Parser {
             }
         }
 
-        Ok(program)
+        if self.errors.is_empty() {
+            Ok(program)
+        } else {
+            Err(ParserError {
+                errors: self.errors.clone(),
+            })
+        }
+    }
+
+    fn peek_error(&mut self, token_type: TokenType) {
+        let message = format!(
+            "expected next token to be {:?} instead of {:?}",
+            &token_type,
+            self.peek_token.clone().unwrap().token_type
+        );
+
+        error!("{}", message);
+        self.errors.push(message);
+    }
+
+    fn next_token(&mut self) {
+        self.curr_token = self.peek_token.take();
+        self.peek_token = Some(self.lexer.next_token());
     }
 
     fn parse_statement(&mut self) -> Option<Node> {
@@ -115,6 +140,7 @@ impl Parser {
             self.next_token();
             true
         } else {
+            self.peek_error(token_type);
             false
         }
     }
@@ -152,21 +178,27 @@ let foobar = 838383;
 
         let mut parser = Parser::new(lexer);
         let result = parser.parse_program();
-        // assert!(result.is_err(), "Failed to parse the Program");
-        if let Ok(program) = result {
-            let len = program.statements.len();
-            assert_eq!(
-                len, 3,
-                "Program.statements does not contain 3 statements. got={}",
-                len
-            );
+        match result {
+            Ok(program) => {
+                test_program_statement(program, tests);
+            }
+            Err(e) => {
+                panic!("Error parsing program: {:?}", e);
+            }
+        }
+    }
 
-            for (i, tt) in tests.iter().enumerate() {
-                let statement = &program.statements[i];
-
-                if !test_let_node(statement, tt.to_string()) {
-                    return;
-                }
+    fn test_program_statement(program: Program, tests: &[&str; 3]) {
+        let len = program.statements.len();
+        assert_eq!(
+            len, 3,
+            "Program.statements does not contain 3 statements. got={}",
+            len
+        );
+        for (i, tt) in tests.iter().enumerate() {
+            let statement = &program.statements[i];
+            if !test_let_node(statement, tt.to_string()) {
+                break;
             }
         }
     }
