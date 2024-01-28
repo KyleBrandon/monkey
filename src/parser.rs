@@ -1,7 +1,7 @@
 use tracing::{error, info};
 
 use crate::{
-    ast::node::{Identifier, LetStatement, Node, Program},
+    ast::node::{Identifier, LetStatement, Node, Program, ReturnStatement},
     lexer::Lexer,
     token::{Token, TokenType},
 };
@@ -82,11 +82,8 @@ impl Parser {
     fn parse_statement(&mut self) -> Option<Node> {
         if let Some(token) = &self.curr_token {
             match token.token_type {
-                TokenType::Let => {
-                    info!("parse_let_statement");
-
-                    self.parse_let_statement()
-                }
+                TokenType::Let => self.parse_let_statement(),
+                TokenType::Return => self.parse_return_statement(),
                 _ => None,
             }
         } else {
@@ -95,13 +92,14 @@ impl Parser {
     }
 
     fn parse_let_statement(&mut self) -> Option<Node> {
+        info!("parse_let_statement");
         if let Some(token) = self.curr_token.clone() {
             if !self.expect_peak(TokenType::Ident) {
-                info!("parse_let_statement: missing Ident");
+                error!("parse_let_statement: missing Ident");
                 return None;
             }
             if !self.expect_peak(TokenType::Assign) {
-                info!("parse_let_statement: missing Assign");
+                error!("parse_let_statement: missing Assign");
                 return None;
             }
             let name = Identifier {
@@ -121,6 +119,26 @@ impl Parser {
             };
 
             return Some(Node::LetStatement(statement));
+        }
+        None
+    }
+
+    fn parse_return_statement(&mut self) -> Option<Node> {
+        info!("parse_return_statement");
+        if let Some(token) = self.curr_token.clone() {
+            self.next_token();
+
+            // TODO: We're skipping expressions until we encounter a semicolon
+
+            while !self.current_token_is(TokenType::Semicolon) {
+                self.next_token();
+            }
+
+            let statement = ReturnStatement {
+                token: token.clone(),
+            };
+
+            return Some(Node::ReturnStatement(statement));
         }
         None
     }
@@ -181,6 +199,53 @@ let foobar = 838383;
         match result {
             Ok(program) => {
                 test_program_statement(program, tests);
+            }
+            Err(e) => {
+                panic!("Error parsing program: {:?}", e);
+            }
+        }
+    }
+
+    #[test]
+    fn test_return_statement() {
+        tracing_subscriber::fmt().init();
+
+        let input = r#"
+return 5;
+
+return 10;
+
+return 993322;
+"#;
+
+        let lexer = Lexer::new(input.to_string());
+
+        let mut parser = Parser::new(lexer);
+        let result = parser.parse_program();
+        match result {
+            Ok(program) => {
+                let len = program.statements.len();
+                assert_eq!(
+                    len, 3,
+                    "Program.statements does not contain 3 statements. got={}",
+                    len
+                );
+                for statement in program.statements.iter() {
+                    if let Node::ReturnStatement(ret_statement) = statement {
+                        if ret_statement.token_literal() != "let" {
+                            println!(
+                                "statement.token_literal not 'let'. got={}",
+                                ret_statement.token_literal()
+                            );
+                            continue;
+                        }
+                    } else {
+                        println!(
+                            "statement not ReturnStatement. got={}",
+                            statement.token_literal()
+                        );
+                    }
+                }
             }
             Err(e) => {
                 panic!("Error parsing program: {:?}", e);

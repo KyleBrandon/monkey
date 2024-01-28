@@ -16,6 +16,7 @@ pub enum Node {
     Program(Program),
     LetStatement(LetStatement),
     Identifier(Identifier),
+    ReturnStatement(ReturnStatement),
 }
 
 impl Node {
@@ -24,6 +25,7 @@ impl Node {
             Node::Program(program) => program.token_literal(),
             Node::LetStatement(let_statement) => let_statement.token_literal(),
             Node::Identifier(identifier) => identifier.token_literal(),
+            Node::ReturnStatement(ret_statement) => ret_statement.token_literal(),
         }
     }
 }
@@ -68,6 +70,18 @@ pub struct LetStatement {
 }
 
 impl LetStatement {
+    pub fn token_literal(&self) -> String {
+        self.token.literal.clone()
+    }
+}
+
+#[derive(Debug)]
+pub struct ReturnStatement {
+    pub token: Token,
+    // pub return_value: Box<Node>,
+}
+
+impl ReturnStatement {
     pub fn token_literal(&self) -> String {
         self.token.literal.clone()
     }
