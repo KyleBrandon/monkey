@@ -31,8 +31,10 @@ pub enum Node {
     ReturnStatement(ReturnStatement),
     ExpressionStatement(ExpressionStatement),
     IntegerLiteral(IntegerLiteral),
+    BooleanLiteral(BooleanLiteral),
     PrefixExpression(PrefixExpression),
     InfixExpression(InfixExpression),
+    IfExpression(IfExpression),
 }
 
 impl Node {
@@ -45,8 +47,10 @@ impl Node {
             Node::ReturnStatement(statement) => statement.token_literal(),
             Node::ExpressionStatement(statement) => statement.token_literal(),
             Node::IntegerLiteral(statement) => statement.token_literal(),
+            Node::BooleanLiteral(statement) => statement.token_literal(),
             Node::PrefixExpression(statement) => statement.token_literal(),
             Node::InfixExpression(statement) => statement.token_literal(),
+            Node::IfExpression(statement) => statement.token_literal(),
         }
     }
 
@@ -59,8 +63,10 @@ impl Node {
             Node::ReturnStatement(statement) => statement.string(),
             Node::ExpressionStatement(statement) => statement.string(),
             Node::IntegerLiteral(statement) => statement.string(),
+            Node::BooleanLiteral(statement) => statement.string(),
             Node::PrefixExpression(statement) => statement.string(),
             Node::InfixExpression(statement) => statement.string(),
+            Node::IfExpression(statement) => statement.string(),
         }
     }
 }
@@ -194,7 +200,7 @@ impl PrefixExpression {
         self.token.literal.clone()
     }
     pub fn string(&self) -> String {
-        format!("({} {})", self.operator, self.right.string())
+        format!("({}{})", self.operator, self.right.string())
     }
 }
 
@@ -217,6 +223,74 @@ impl InfixExpression {
             self.operator,
             self.right.string()
         )
+    }
+}
+
+#[derive(Debug)]
+pub struct BooleanLiteral {
+    pub token: Token,
+    pub value: bool,
+}
+
+impl BooleanLiteral {
+    pub fn token_literal(&self) -> String {
+        self.token.literal.clone()
+    }
+
+    pub fn string(&self) -> String {
+        self.token.literal.clone()
+    }
+}
+
+#[derive(Debug)]
+pub struct IfExpression {
+    pub token: Token,
+    pub condition: Box<Node>,
+    pub consequence: BlockStatement,
+    pub alternative: Option<BlockStatement>,
+}
+
+impl IfExpression {
+    pub fn token_literal(&self) -> String {
+        self.token.literal.clone()
+    }
+
+    pub fn string(&self) -> String {
+        let mut result = format!(
+            "if {} {}",
+            self.condition.string(),
+            self.consequence.string()
+        );
+
+        if let Some(alternative) = &self.alternative {
+            result = format!("{}else {}", result, alternative.string());
+        }
+
+        result
+    }
+}
+
+#[derive(Debug)]
+pub struct BlockStatement {
+    pub token: Token,
+    pub statements: Vec<Node>,
+}
+
+impl BlockStatement {
+    pub fn token_literal(&self) -> String {
+        self.token.literal.clone()
+    }
+
+    pub fn string(&self) -> String {
+        let mut buffer = String::new();
+
+        self.statements.iter().fold(&mut buffer, |acc, s| {
+            acc.push_str(&s.string());
+
+            acc
+        });
+
+        buffer
     }
 }
 

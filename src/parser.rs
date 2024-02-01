@@ -1,11 +1,12 @@
 use std::collections::HashMap;
 
-use tracing::{error, info};
+use tracing::{dispatcher::with_default, error, info};
 
 use crate::{
     ast::node::{
-        ExpressionStatement, Identifier, InfixExpression, IntegerLiteral, LetStatement, Node,
-        Precedence, PrefixExpression, Program, ReturnStatement,
+        BlockStatement, BooleanLiteral, ExpressionStatement, Identifier, IfExpression,
+        InfixExpression, IntegerLiteral, LetStatement, Node, Precedence, PrefixExpression, Program,
+        ReturnStatement,
     },
     lexer::Lexer,
     token::{Token, TokenType},
@@ -158,7 +159,7 @@ impl Parser {
         if let Some(token) = self.curr_token.clone() {
             if let Some(expression) = self.parse_expression(Precedence::Lowest) {
                 let statement = ExpressionStatement {
-                    token: token.clone(),
+                    token,
                     expression: Box::new(expression),
                 };
 
@@ -176,6 +177,7 @@ impl Parser {
     fn parse_expression(&mut self, precedence: Precedence) -> Option<Node> {
         info!("parse_expression");
 
+        // get the current token
         let Some(token) = self.curr_token.clone() else {
             return None;
         };
@@ -185,6 +187,10 @@ impl Parser {
             TokenType::Int => self.parse_integer_literal(token),
             TokenType::Bang => self.parse_prefix_expression(token),
             TokenType::Minus => self.parse_prefix_expression(token),
+            TokenType::True => self.parse_boolean_literal(token),
+            TokenType::False => self.parse_boolean_literal(token),
+            TokenType::LParen => self.parse_grouped_expression(),
+            TokenType::If => self.parse_if_expression(token),
             _ => {
                 let message = format!("no prefix parse function for {:?} found", token.token_type);
 
@@ -194,6 +200,7 @@ impl Parser {
             }
         };
 
+        // strip the expression out of the Option
         let Some(mut expr) = prefix else {
             return None;
         };
@@ -227,8 +234,15 @@ impl Parser {
         Some(expr)
     }
 
-    fn stuff(token: Option<String>) -> Option<u32> {
-        token.map(|t| t.parse::<u32>().unwrap_or_default())
+    fn parse_grouped_expression(&mut self) -> Option<Node> {
+        self.next_token();
+
+        let expression = self.parse_expression(Precedence::Lowest);
+        if !self.expect_peak(TokenType::RParen) {
+            return None;
+        }
+
+        expression
     }
 
     fn parse_identifier(&self, token: Token) -> Option<Node> {
@@ -248,6 +262,14 @@ impl Parser {
         }
     }
 
+    fn parse_boolean_literal(&self, token: Token) -> Option<Node> {
+        info!("parse_boolean_literal");
+        Some(Node::BooleanLiteral(BooleanLiteral {
+            token,
+            value: self.current_token_is(TokenType::True),
+        }))
+    }
+
     fn parse_prefix_expression(&mut self, token: Token) -> Option<Node> {
         info!("parse_prefix_expression");
         let operator = token.literal.clone();
@@ -262,21 +284,85 @@ impl Parser {
     }
 
     fn parse_infix_expression(&mut self, left: Node) -> Option<Node> {
-        if let Some(token) = self.curr_token.clone() {
-            let precedence = self.curr_precedence();
-            self.next_token();
-            self.parse_expression(precedence).map(|right| {
-                let operator = token.literal.clone();
-                Node::InfixExpression(InfixExpression {
-                    token,
-                    operator,
-                    left: Box::new(left),
-                    right: Box::new(right),
-                })
+        let Some(token) = self.curr_token.clone() else {
+            return None;
+        };
+
+        let precedence = self.curr_precedence();
+        self.next_token();
+
+        self.parse_expression(precedence).map(|right| {
+            let operator = token.literal.clone();
+            Node::InfixExpression(InfixExpression {
+                token,
+                operator,
+                left: Box::new(left),
+                right: Box::new(right),
             })
+        })
+    }
+
+    fn parse_if_expression(&mut self, token: Token) -> Option<Node> {
+        let token = token.clone();
+
+        if !self.expect_peak(TokenType::LParen) {
+            return None;
+        }
+
+        self.next_token();
+
+        let Some(condition) = self.parse_expression(Precedence::Lowest) else {
+            return None;
+        };
+
+        if !self.expect_peak(TokenType::RParen) {
+            return None;
+        }
+
+        if !self.expect_peak(TokenType::LBrace) {
+            return None;
+        }
+
+        let consequence = self.parse_block_statement();
+
+        let alternative = if self.peek_token_is(TokenType::Else) {
+            self.next_token();
+
+            if !self.expect_peak(TokenType::LBrace) {
+                return None;
+            }
+
+            Some(self.parse_block_statement())
         } else {
             None
+        };
+
+        Some(Node::IfExpression(IfExpression {
+            token,
+            condition: Box::new(condition),
+            consequence,
+            alternative,
+        }))
+    }
+
+    fn parse_block_statement(&mut self) -> BlockStatement {
+        let Some(token) = self.curr_token.clone() else {
+            panic!("Expected token in block statement");
+        };
+
+        self.next_token();
+
+        let mut statements = Vec::new();
+
+        while !self.current_token_is(TokenType::RBrace) && !self.current_token_is(TokenType::EOF) {
+            if let Some(statement) = self.parse_statement() {
+                statements.push(statement);
+            }
+
+            self.next_token();
         }
+
+        BlockStatement { token, statements }
     }
 
     fn current_token_is(&self, token_type: TokenType) -> bool {
@@ -345,9 +431,12 @@ fn init_precedence_lookup() -> HashMap<TokenType, Precedence> {
 #[cfg(test)]
 mod tests {
 
-    use std::ops::Deref;
+    use std::{collections::VecDeque, ops::Deref, ptr::write_unaligned};
 
-    use crate::{ast::node::Node, lexer::Lexer};
+    use crate::{
+        ast::node::{IfExpression, Node},
+        lexer::Lexer,
+    };
 
     use super::*;
     #[test]
@@ -402,18 +491,17 @@ return 993322;
                     len
                 );
                 for statement in program.statements.iter() {
-                    if let Node::ReturnStatement(ret_statement) = statement {
-                        if ret_statement.token_literal() != "let" {
-                            println!(
-                                "statement.token_literal not 'let'. got={}",
-                                ret_statement.token_literal()
-                            );
-                            continue;
-                        }
-                    } else {
-                        println!(
+                    let Node::ReturnStatement(ret_statement) = statement else {
+                        panic!(
                             "statement not ReturnStatement. got={}",
                             statement.token_literal()
+                        );
+                    };
+
+                    if ret_statement.token_literal() != "return" {
+                        panic!(
+                            "statement.token_literal not 'let'. got={}",
+                            ret_statement.token_literal()
                         );
                     }
                 }
@@ -439,26 +527,26 @@ return 993322;
                     len
                 );
                 for statement in program.statements.iter() {
-                    if let Node::ExpressionStatement(expr_statement) = statement {
-                        let expr = expr_statement.expression.deref();
-                        if let Node::Identifier(ident) = expr {
-                            if ident.value != "foobar" {
-                                panic!("ident.value not {}. got={}", "foobar", ident.value);
-                            }
-                            if ident.token_literal() != "foobar" {
-                                panic!(
-                                    "ident.token_literal not {}. got={}",
-                                    "foobar",
-                                    ident.token_literal()
-                                );
-                            }
-                        } else {
-                            panic!("expression not Identifier. got={}", expr.token_literal());
-                        }
-                    } else {
+                    let Node::ExpressionStatement(expr_statement) = statement else {
                         panic!(
                             "statement not ExpressionStatement. got={}",
                             statement.token_literal()
+                        );
+                    };
+
+                    let expr = expr_statement.expression.deref();
+                    let Node::Identifier(ident) = expr else {
+                        panic!("expression not Identifier. got={}", expr.token_literal());
+                    };
+
+                    if ident.value != "foobar" {
+                        panic!("ident.value not {}. got={}", "foobar", ident.value);
+                    }
+                    if ident.token_literal() != "foobar" {
+                        panic!(
+                            "ident.token_literal not {}. got={}",
+                            "foobar",
+                            ident.token_literal()
                         );
                     }
                 }
@@ -487,7 +575,7 @@ return 993322;
                 for statement in program.statements.iter() {
                     if let Node::ExpressionStatement(expr_statement) = statement {
                         let expr = expr_statement.expression.deref();
-                        if !test_integer_literal(expr, 5) {
+                        if !test_integer_literal(expr, "5") {
                             return;
                         }
                     } else {
@@ -506,7 +594,12 @@ return 993322;
 
     #[test]
     fn test_parsing_prefix_expression() {
-        let prefix_tests = [("!5", "!", 5), ("-15", "-", 15)];
+        let prefix_tests = [
+            ("!5", "!", "5"),
+            ("-15", "-", "15"),
+            ("!true;", "!", "true"),
+            ("!false;", "!", "false"),
+        ];
 
         for (input, operator, value) in prefix_tests.iter() {
             let lexer = Lexer::new(input.to_string());
@@ -521,26 +614,27 @@ return 993322;
                         len
                     );
                     for statement in program.statements.iter() {
-                        if let Node::ExpressionStatement(expr_statement) = statement {
-                            let expr = expr_statement.expression.deref();
-                            if let Node::PrefixExpression(prefix_expr) = expr {
-                                if prefix_expr.operator != *operator {
-                                    panic!(
-                                        "prefix_expr.operator not {}. got={}",
-                                        operator, prefix_expr.operator
-                                    );
-                                }
-                                if !test_integer_literal(&prefix_expr.right, *value) {
-                                    return;
-                                }
-                            } else {
-                                panic!("expression not PrefixExpression. got={:?}", statement);
-                            }
-                        } else {
+                        let Node::ExpressionStatement(expr_statement) = statement else {
                             panic!(
                                 "statement not ExpressionStatement. got={}",
                                 statement.token_literal()
                             );
+                        };
+
+                        let Node::PrefixExpression(prefix_expr) = expr_statement.expression.deref()
+                        else {
+                            panic!("expression not PrefixExpression. got={:?}", statement);
+                        };
+
+                        if prefix_expr.operator != *operator {
+                            panic!(
+                                "prefix_expr.operator not {}. got={}",
+                                operator, prefix_expr.operator
+                            );
+                        }
+
+                        if !test_integer_literal(&prefix_expr.right, value) {
+                            return;
                         }
                     }
                 }
@@ -554,14 +648,19 @@ return 993322;
     #[test]
     fn test_parsing_infix_expression() {
         let infix_tests = [
-            ("5 + 5;", 5, "+", 5),
-            ("5 - 5;", 5, "-", 5),
-            ("5 * 5;", 5, "*", 5),
-            ("5 / 5;", 5, "/", 5),
-            ("5 > 5;", 5, ">", 5),
-            ("5 < 5;", 5, "<", 5),
-            ("5 == 5;", 5, "==", 5),
-            ("5 != 5;", 5, "!=", 5),
+            ("5 + 5;", "5", "+", "5"),
+            ("5 - 5;", "5", "-", "5"),
+            ("5 * 5;", "5", "*", "5"),
+            ("5 / 5;", "5", "/", "5"),
+            ("5 > 5;", "5", ">", "5"),
+            ("5 < 5;", "5", "<", "5"),
+            ("5 == 5;", "5", "==", "5"),
+            ("5 != 5;", "5", "!=", "5"),
+            ("true == true", "true", "==", "true"),
+            ("true != false", "true", "!=", "false"),
+            ("false == false", "false", "==", "false"),
+            // ("3 + 4 * 5;", 3, "+", (4 * 5)),
+            // ("3 * 1 + 4 * 5;", (3 * 1), "+", (4 * 5)
         ];
 
         for (input, left_value, operator, right_value) in infix_tests.iter() {
@@ -577,29 +676,16 @@ return 993322;
                         len
                     );
                     for statement in program.statements.iter() {
-                        if let Node::ExpressionStatement(expr_statement) = statement {
-                            let expr = expr_statement.expression.deref();
-                            if let Node::InfixExpression(prefix_expr) = expr {
-                                if !test_integer_literal(&prefix_expr.right, *left_value) {
-                                    return;
-                                }
-                                if prefix_expr.operator != *operator {
-                                    panic!(
-                                        "infix_expr.operator not {}. got={}",
-                                        operator, prefix_expr.operator
-                                    );
-                                }
-                                if !test_integer_literal(&prefix_expr.right, *right_value) {
-                                    return;
-                                }
-                            } else {
-                                panic!("expression not InfixExpression. got={:?}", statement);
-                            }
-                        } else {
+                        let Node::ExpressionStatement(expr_statement) = statement else {
                             panic!(
                                 "statement not ExpressionStatement. got={}",
                                 statement.token_literal()
                             );
+                        };
+
+                        let expr = expr_statement.expression.deref();
+                        if !test_infix_expression(expr, left_value, operator, right_value) {
+                            return;
                         }
                     }
                 }
@@ -610,27 +696,292 @@ return 993322;
         }
     }
 
-    fn test_integer_literal(expr: &Node, value: i64) -> bool {
-        if let Node::IntegerLiteral(integer_literal) = expr {
-            if integer_literal.value != value {
-                println!(
-                    "integer_literal.value not {}. got={}",
-                    value, integer_literal.value
-                );
-                return false;
+    #[test]
+    fn test_operator_precedence() {
+        let tests = [
+            ("-a * b", "((-a) * b)"),
+            ("!-a", "(!(-a))"),
+            ("a + b + c", "((a + b) + c)"),
+            ("a + b - c", "((a + b) - c)"),
+            ("a * b * c", "((a * b) * c)"),
+            ("a * b / c", "((a * b) / c)"),
+            ("a + b / c", "(a + (b / c))"),
+            ("a + b * c + d / e - f", "(((a + (b * c)) + (d / e)) - f)"),
+            ("3 + 4; -5 * 5", "(3 + 4)((-5) * 5)"),
+            ("5 > 4 == 3 < 4", "((5 > 4) == (3 < 4))"),
+            ("5 < 4 != 3 > 4", "((5 < 4) != (3 > 4))"),
+            (
+                "3 + 4 * 5 == 3 * 1 + 4 * 5",
+                "((3 + (4 * 5)) == ((3 * 1) + (4 * 5)))",
+            ),
+            ("true", "true"),
+            ("false", "false"),
+            ("3 > 5 == false", "((3 > 5) == false)"),
+            ("3 < 5 == true", "((3 < 5) == true)"),
+            ("1 + (2 + 3) + 4", "((1 + (2 + 3)) + 4)"),
+            ("(5 + 5) * 2", "((5 + 5) * 2)"),
+            ("2 / (5 + 5)", "(2 / (5 + 5))"),
+            ("-(5 + 5)", "(-(5 + 5))"),
+            ("!(true == true)", "(!(true == true))"),
+        ];
+        for tt in tests {
+            let lexer = Lexer::new(tt.0.to_string());
+            let mut parser = Parser::new(lexer);
+            let result = parser.parse_program();
+            match result {
+                Ok(program) => {
+                    //
+                    assert_eq!(tt.1, program.string());
+                }
+                Err(e) => {
+                    //
+                    panic!("Error parsing program: {:?}", e);
+                }
             }
-            if integer_literal.token_literal() != value.to_string() {
-                println!(
-                    "integer_literal.token_literal not {}. got={}",
-                    value,
-                    integer_literal.token_literal()
+        }
+    }
+
+    #[test]
+    fn test_if_expression() {
+        let input = "if (x < y) { x }";
+
+        let lexer = Lexer::new(input.to_string());
+        let mut parser = Parser::new(lexer);
+        let result = parser.parse_program();
+        match result {
+            Ok(program) => {
+                let len = program.statements.len();
+                assert_eq!(
+                    len, 1,
+                    "Program.statements does not contain 1 statements. got={}",
+                    len
                 );
-                return false;
+                for statement in program.statements.iter() {
+                    let Node::ExpressionStatement(expr_statement) = statement else {
+                        panic!(
+                            "statement not IfExpression. got={}",
+                            statement.token_literal()
+                        );
+                    };
+                    let Node::IfExpression(expr) = expr_statement.expression.deref() else {
+                        panic!(
+                            "statement not IfExpression. got={}",
+                            expr_statement.token_literal()
+                        );
+                    };
+
+                    if !test_if_expr(expr) {
+                        return;
+                    }
+
+                    if let Some(alternative) = &expr.alternative {
+                        panic!(
+                            "expr.alternative.statements as not None. got={:?}",
+                            alternative
+                        );
+                    }
+                }
             }
-        } else {
+            Err(e) => panic!("Error parsing program: {:?}", e),
+        }
+    }
+
+    #[test]
+    fn test_if_else_expression() {
+        let input = "if (x < y) { x } else { y }";
+
+        let lexer = Lexer::new(input.to_string());
+        let mut parser = Parser::new(lexer);
+        let result = parser.parse_program();
+        match result {
+            Ok(program) => {
+                let len = program.statements.len();
+                assert_eq!(
+                    len, 1,
+                    "Program.statements does not contain 1 statements. got={}",
+                    len
+                );
+                for statement in program.statements.iter() {
+                    let Node::ExpressionStatement(expr_statement) = statement else {
+                        panic!(
+                            "statement not IfExpression. got={}",
+                            statement.token_literal()
+                        );
+                    };
+                    let Node::IfExpression(expr) = expr_statement.expression.deref() else {
+                        panic!(
+                            "statement not IfExpression. got={}",
+                            expr_statement.token_literal()
+                        );
+                    };
+
+                    if !test_if_expr(expr) {
+                        return;
+                    }
+
+                    if let Some(alternative) = &expr.alternative {
+                        if alternative.statements.len() != 1 {
+                            panic!(
+                                "exp.alternative.statements does not contain 1 statements. got={}",
+                                alternative.statements.len()
+                            );
+                        }
+
+                        let Node::ExpressionStatement(alt) = &alternative.statements[0] else {
+                            panic!(
+                                "Statements[0] is not ExpressionStatement. got={:?}",
+                                alternative.statements[0]
+                            );
+                        };
+
+                        if !test_identifier(alt.expression.deref(), "y") {
+                            return;
+                        }
+                    }
+                }
+            }
+            Err(e) => panic!("Error parsing program: {:?}", e),
+        }
+    }
+
+    fn test_if_expr(expr: &IfExpression) -> bool {
+        if !test_infix_expression(expr.condition.deref(), "x", "<", "y") {
+            return false;
+        }
+
+        if expr.consequence.statements.len() != 1 {
+            panic!(
+                "consequence is not 1 statement. got={}",
+                expr.consequence.statements.len()
+            );
+        }
+
+        let Node::ExpressionStatement(consequence) = &expr.consequence.statements[0] else {
+            panic!(
+                "Statements is not ExpressionStatement. got={:?}",
+                expr.consequence.statements[0]
+            );
+        };
+
+        if !test_identifier(consequence.expression.deref(), "x") {
+            return false;
+        }
+
+        true
+    }
+
+    fn test_literal_expression(expr: &Node, expected: &str) -> bool {
+        match expr {
+            Node::IntegerLiteral(_) => test_integer_literal(expr, expected),
+            Node::Identifier(_) => test_identifier(expr, expected),
+            Node::BooleanLiteral(_) => {
+                test_boolean_literal(expr, expected.parse::<bool>().unwrap())
+            }
+            _ => {
+                println!(
+                    "expression not IntegerLiteral. got={:?}",
+                    expr.token_literal()
+                );
+                false
+            }
+        }
+    }
+
+    fn test_boolean_literal(expr: &Node, value: bool) -> bool {
+        let Node::BooleanLiteral(boolean_literal) = expr else {
+            println!(
+                "expression not BooleanLiteral. got={:?}",
+                expr.token_literal()
+            );
+            return false;
+        };
+        if boolean_literal.value != value {
+            println!(
+                "boolean_literal.value not {}. got={}",
+                value, boolean_literal.value
+            );
+            return false;
+        }
+        if boolean_literal.token_literal() != value.to_string() {
+            println!(
+                "boolean_literal.token_literal not {}. got={}",
+                value,
+                boolean_literal.token_literal()
+            );
+            return false;
+        }
+        true
+    }
+
+    fn test_infix_expression(expr: &Node, left: &str, operator: &str, right: &str) -> bool {
+        let Node::InfixExpression(infix_expr) = expr else {
+            println!(
+                "expression not InfixExpression. got={:?}",
+                expr.token_literal()
+            );
+            return false;
+        };
+        if !test_literal_expression(&infix_expr.left, left) {
+            return false;
+        }
+        if infix_expr.operator != operator {
+            println!(
+                "infix_expr.operator is not {}. got={}",
+                operator, infix_expr.operator
+            );
+            return false;
+        }
+        if !test_literal_expression(&infix_expr.right, right) {
+            return false;
+        }
+        true
+    }
+
+    fn test_integer_literal(expr: &Node, value: &str) -> bool {
+        let Node::IntegerLiteral(integer_literal) = expr else {
             println!(
                 "expression not IntegerLiteral. got={:?}",
                 expr.token_literal()
+            );
+            return false;
+        };
+
+        if integer_literal.value.to_string() != value {
+            println!(
+                "integer_literal.value not {}. got={}",
+                value, integer_literal.value
+            );
+            return false;
+        }
+
+        if integer_literal.token_literal() != value {
+            println!(
+                "integer_literal.token_literal not {}. got={}",
+                value,
+                integer_literal.token_literal()
+            );
+            return false;
+        }
+
+        true
+    }
+
+    fn test_identifier(expr: &Node, value: &str) -> bool {
+        let Node::Identifier(identifier) = expr else {
+            println!("expression not Identifier. got={:?}", expr.token_literal());
+            return false;
+        };
+
+        if identifier.value != value {
+            println!("identifier.value not {}. got={}", value, identifier.value);
+            return false;
+        }
+
+        if identifier.token_literal() != value {
+            println!(
+                "identifier.token_literal not {}. got={}",
+                value,
+                identifier.token_literal()
             );
             return false;
         }
