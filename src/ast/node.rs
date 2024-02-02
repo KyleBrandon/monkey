@@ -1,3 +1,5 @@
+use std::ops::Deref;
+
 use crate::token::Token;
 
 #[derive(Debug, PartialEq, Copy, Clone, PartialOrd, Eq, Hash)]
@@ -36,6 +38,7 @@ pub enum Node {
     InfixExpression(InfixExpression),
     IfExpression(IfExpression),
     FunctionLiteral(FunctionLiteral),
+    CallExpression(CallExpression),
 }
 
 impl Node {
@@ -53,6 +56,7 @@ impl Node {
             Node::InfixExpression(statement) => statement.token_literal(),
             Node::IfExpression(statement) => statement.token_literal(),
             Node::FunctionLiteral(statement) => statement.token_literal(),
+            Node::CallExpression(statement) => statement.token_literal(),
         }
     }
 
@@ -70,6 +74,7 @@ impl Node {
             Node::InfixExpression(statement) => statement.string(),
             Node::IfExpression(statement) => statement.string(),
             Node::FunctionLiteral(statement) => statement.string(),
+            Node::CallExpression(statement) => statement.string(),
         }
     }
 }
@@ -313,6 +318,31 @@ impl FunctionLiteral {
         format!(
             "({})",
             self.parameters
+                .iter()
+                .map(|p| p.string())
+                .collect::<Vec<String>>()
+                .join(", ")
+        )
+    }
+}
+
+#[derive(Debug)]
+pub struct CallExpression {
+    pub token: Token,
+    pub function: Box<Node>,
+    pub arguments: Vec<Node>,
+}
+
+impl CallExpression {
+    pub fn token_literal(&self) -> String {
+        self.token.literal.clone()
+    }
+
+    pub fn string(&self) -> String {
+        format!(
+            "{}({})",
+            self.function.deref().string(),
+            self.arguments
                 .iter()
                 .map(|p| p.string())
                 .collect::<Vec<String>>()

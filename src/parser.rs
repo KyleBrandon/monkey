@@ -1,11 +1,11 @@
 use std::collections::HashMap;
 
-use tracing::{dispatcher::with_default, error, info};
+use tracing::{error, info};
 
 use crate::{
     ast::node::{
-        BlockStatement, BooleanLiteral, ExpressionStatement, FunctionLiteral, Identifier,
-        IfExpression, InfixExpression, IntegerLiteral, LetStatement, Node, Precedence,
+        BlockStatement, BooleanLiteral, CallExpression, ExpressionStatement, FunctionLiteral,
+        Identifier, IfExpression, InfixExpression, IntegerLiteral, LetStatement, Node, Precedence,
         PrefixExpression, Program, ReturnStatement,
     },
     lexer::Lexer,
@@ -102,56 +102,65 @@ impl Parser {
 
     fn parse_let_statement(&mut self) -> Option<Node> {
         info!("parse_let_statement");
-        if let Some(token) = self.curr_token.clone() {
-            if !self.expect_peak(TokenType::Ident) {
-                error!("parse_let_statement: missing Ident");
-                return None;
-            }
-            if !self.expect_peak(TokenType::Assign) {
-                error!("parse_let_statement: missing Assign");
-                return None;
-            }
-            let name = Identifier {
-                token: token.clone(),
-                value: token.literal.clone(),
-            };
+        let Some(token) = self.curr_token.clone() else {
+            return None;
+        };
 
-            // TODO: We're skipping expressions until we encounter a semicolon
-
-            while !self.current_token_is(TokenType::Semicolon) {
-                self.next_token();
-            }
-
-            let statement = LetStatement {
-                token: token.clone(),
-                name,
-                value: Box::new(Node::Empty),
-            };
-
-            return Some(Node::LetStatement(statement));
+        if !self.expect_peak(TokenType::Ident) {
+            error!("parse_let_statement: missing Ident");
+            return None;
         }
-        None
+
+        let name = Identifier {
+            token: token.clone(),
+            value: token.literal.clone(),
+        };
+
+        if !self.expect_peak(TokenType::Assign) {
+            error!("parse_let_statement: missing Assign");
+            return None;
+        }
+
+        self.next_token();
+
+        let Some(value) = self.parse_expression(Precedence::Lowest) else {
+            return None;
+        };
+
+        if self.peek_token_is(TokenType::Semicolon) {
+            self.next_token();
+        }
+
+        let statement = LetStatement {
+            token: token.clone(),
+            name,
+            value: Box::new(value),
+        };
+
+        return Some(Node::LetStatement(statement));
     }
 
     fn parse_return_statement(&mut self) -> Option<Node> {
         info!("parse_return_statement");
-        if let Some(token) = self.curr_token.clone() {
+        let Some(token) = self.curr_token.clone() else {
+            return None;
+        };
+
+        self.next_token();
+        let Some(ret_value) = self.parse_expression(Precedence::Lowest) else {
+            return None;
+        };
+
+        if self.peek_token_is(TokenType::Semicolon) {
             self.next_token();
-
-            // TODO: We're skipping expressions until we encounter a semicolon
-
-            while !self.current_token_is(TokenType::Semicolon) {
-                self.next_token();
-            }
-
-            let statement = ReturnStatement {
-                token: token.clone(),
-                return_value: Box::new(Node::Empty),
-            };
-
-            return Some(Node::ReturnStatement(statement));
         }
-        None
+
+        let statement = ReturnStatement {
+            token: token.clone(),
+            return_value: Box::new(ret_value),
+        };
+
+        Some(Node::ReturnStatement(statement))
     }
 
     fn parse_expression_statement(&mut self) -> Option<Node> {
@@ -222,6 +231,7 @@ impl Parser {
                 TokenType::NotEqual => self.parse_infix_expression(expr),
                 TokenType::LT => self.parse_infix_expression(expr),
                 TokenType::GT => self.parse_infix_expression(expr),
+                TokenType::LParen => self.parse_call_expression(expr),
                 _ => Some(expr),
             };
 
@@ -429,6 +439,51 @@ impl Parser {
         Some(identifiers)
     }
 
+    fn parse_call_expression(&mut self, function: Node) -> Option<Node> {
+        let Some(token) = self.curr_token.clone() else {
+            return None;
+        };
+
+        Some(Node::CallExpression(CallExpression {
+            token,
+            function: Box::new(function),
+            arguments: self.parse_call_arguments(),
+        }))
+    }
+
+    fn parse_call_arguments(&mut self) -> Vec<Node> {
+        let mut args = Vec::new();
+
+        if self.peek_token_is(TokenType::RParen) {
+            self.next_token();
+            return args;
+        }
+
+        self.next_token();
+
+        let Some(expression) = self.parse_expression(Precedence::Lowest) else {
+            panic!("Failed to parse call expression");
+        };
+
+        args.push(expression);
+
+        while self.peek_token_is(TokenType::Comma) {
+            self.next_token();
+            self.next_token();
+            let Some(expression) = self.parse_expression(Precedence::Lowest) else {
+                panic!("Failed to parse call expression");
+            };
+
+            args.push(expression);
+        }
+
+        if !self.expect_peak(TokenType::RParen) {
+            panic!("Expected a right paren after call arguments");
+        }
+
+        args
+    }
+
     fn current_token_is(&self, token_type: TokenType) -> bool {
         if let Some(tt) = &self.curr_token {
             if tt.token_type == token_type {
@@ -488,6 +543,7 @@ fn init_precedence_lookup() -> HashMap<TokenType, Precedence> {
     map.insert(TokenType::Minus, Precedence::Sum);
     map.insert(TokenType::Slash, Precedence::Product);
     map.insert(TokenType::Asterisk, Precedence::Product);
+    map.insert(TokenType::LParen, Precedence::Call);
 
     map
 }
@@ -496,6 +552,8 @@ fn init_precedence_lookup() -> HashMap<TokenType, Precedence> {
 mod tests {
 
     use std::ops::Deref;
+
+    use tracing::subscriber::with_default;
 
     use crate::{
         ast::node::{IfExpression, Node},
@@ -507,25 +565,39 @@ mod tests {
     fn test_let_statement() {
         tracing_subscriber::fmt().init();
         //
-        let input = r#"
-let x = 5;
+        let tests = [
+            ("let x = 5;", "x", "5"),
+            ("let y = true;", "y", "true"),
+            ("let foobar = y;", "foobar", "y"),
+        ];
 
-let y = 10;
+        for tt in tests {
+            let lexer = Lexer::new(tt.0.to_string());
 
-let foobar = 838383;
-"#;
+            let mut parser = Parser::new(lexer);
+            let result = parser.parse_program();
+            match result {
+                Ok(program) => {
+                    if program.statements.len() != 1 {
+                        panic!(
+                            "program.statements does not contain 1 statement. got={:?}",
+                            program.statements.len()
+                        );
+                    }
 
-        let tests = &["x", "y", "foobar"];
-        let lexer = Lexer::new(input.to_string());
+                    let statement = &program.statements[0];
 
-        let mut parser = Parser::new(lexer);
-        let result = parser.parse_program();
-        match result {
-            Ok(program) => {
-                test_program_statement(program, tests);
-            }
-            Err(e) => {
-                panic!("Error parsing program: {:?}", e);
+                    if !test_let_node(statement, tt.1.to_string()) {
+                        return;
+                    }
+
+                    if !test_literal_expression(statement, tt.2) {
+                        return;
+                    }
+                }
+                Err(e) => {
+                    panic!("Error parsing program: {:?}", e);
+                }
             }
         }
     }
@@ -534,44 +606,49 @@ let foobar = 838383;
     fn test_return_statement() {
         tracing_subscriber::fmt().init();
 
-        let input = r#"
-return 5;
+        let tests = [
+            ("return 5;", "5"),
+            ("return true;", "true"),
+            ("return foobar;", "foobar"),
+        ];
 
-return 10;
+        for tt in tests {
+            let lexer = Lexer::new(tt.0.to_string());
 
-return 993322;
-"#;
+            let mut parser = Parser::new(lexer);
+            let result = parser.parse_program();
+            match result {
+                Ok(program) => {
+                    let len = program.statements.len();
+                    assert_eq!(
+                        len, 1,
+                        "Program.statements does not contain 3 statements. got={}",
+                        len
+                    );
+                    for statement in program.statements.iter() {
+                        let Node::ReturnStatement(ret_statement) = statement else {
+                            panic!(
+                                "statement not ReturnStatement. got={}",
+                                statement.token_literal()
+                            );
+                        };
 
-        let lexer = Lexer::new(input.to_string());
+                        if ret_statement.token_literal() != "return" {
+                            panic!(
+                                "statement.token_literal not 'let'. got={}",
+                                ret_statement.token_literal()
+                            );
+                        }
 
-        let mut parser = Parser::new(lexer);
-        let result = parser.parse_program();
-        match result {
-            Ok(program) => {
-                let len = program.statements.len();
-                assert_eq!(
-                    len, 3,
-                    "Program.statements does not contain 3 statements. got={}",
-                    len
-                );
-                for statement in program.statements.iter() {
-                    let Node::ReturnStatement(ret_statement) = statement else {
-                        panic!(
-                            "statement not ReturnStatement. got={}",
-                            statement.token_literal()
-                        );
-                    };
-
-                    if ret_statement.token_literal() != "return" {
-                        panic!(
-                            "statement.token_literal not 'let'. got={}",
-                            ret_statement.token_literal()
-                        );
+                        if !test_literal_expression(ret_statement.return_value.deref(), tt.1) {
+                            //
+                            return;
+                        }
                     }
                 }
-            }
-            Err(e) => {
-                panic!("Error parsing program: {:?}", e);
+                Err(e) => {
+                    panic!("Error parsing program: {:?}", e);
+                }
             }
         }
     }
@@ -787,6 +864,15 @@ return 993322;
             ("2 / (5 + 5)", "(2 / (5 + 5))"),
             ("-(5 + 5)", "(-(5 + 5))"),
             ("!(true == true)", "(!(true == true))"),
+            ("a + add(b * c) + d", "((a + add((b * c))) + d)"),
+            (
+                "add(a, b, 1, 2 * 3, 4 + 5, add(6, 7 * 8))",
+                "add(a, b, 1, (2 * 3), (4 + 5), add(6, (7 * 8)))",
+            ),
+            (
+                "add(a + b + c * d / f + g)",
+                "add((((a + b) + ((c * d) / f)) + g))",
+            ),
         ];
         for tt in tests {
             let lexer = Lexer::new(tt.0.to_string());
@@ -1028,6 +1114,59 @@ return 993322;
                 }
                 Err(e) => panic!("Failed to parse program: {:?}", e),
             }
+        }
+    }
+
+    #[test]
+    fn test_call_expression_parsing() {
+        let input = "add(1, 2 * 3, 4 + 5);";
+        let lexer = Lexer::new(input.to_string());
+        let mut parser = Parser::new(lexer);
+        let result = parser.parse_program();
+        match result {
+            Ok(program) => {
+                //
+                if program.statements.len() != 1 {
+                    panic!(
+                        "program.statements does not contain 1 statments. got={}",
+                        program.statements.len()
+                    );
+                }
+
+                let Node::ExpressionStatement(expr_statement) = &program.statements[0] else {
+                    panic!(
+                        "statement ir not ExpressionStatement. got={:?}",
+                        program.statements[0]
+                    );
+                };
+
+                let Node::CallExpression(call_expression) = &expr_statement.expression.deref()
+                else {
+                    panic!(
+                        "expression is not a CallExpression. got={:?}",
+                        expr_statement.expression.deref()
+                    );
+                };
+
+                if !test_identifier(call_expression.function.deref(), "add") {
+                    panic!(
+                        "CallExpression function is not 'add'. got={:?}",
+                        call_expression.function.deref()
+                    );
+                }
+
+                if call_expression.arguments.len() != 3 {
+                    panic!(
+                        "wrong number of arguments. got={:?}",
+                        call_expression.arguments.len()
+                    );
+                }
+
+                test_literal_expression(&call_expression.arguments[0], "1");
+                test_infix_expression(&call_expression.arguments[1], "2", "*", "3");
+                test_infix_expression(&call_expression.arguments[1], "4", "+", "5");
+            }
+            Err(e) => panic!("Failed to parse program: {:?}", e),
         }
     }
 
