@@ -35,6 +35,7 @@ pub enum Node {
     PrefixExpression(PrefixExpression),
     InfixExpression(InfixExpression),
     IfExpression(IfExpression),
+    FunctionLiteral(FunctionLiteral),
 }
 
 impl Node {
@@ -51,6 +52,7 @@ impl Node {
             Node::PrefixExpression(statement) => statement.token_literal(),
             Node::InfixExpression(statement) => statement.token_literal(),
             Node::IfExpression(statement) => statement.token_literal(),
+            Node::FunctionLiteral(statement) => statement.token_literal(),
         }
     }
 
@@ -67,6 +69,7 @@ impl Node {
             Node::PrefixExpression(statement) => statement.string(),
             Node::InfixExpression(statement) => statement.string(),
             Node::IfExpression(statement) => statement.string(),
+            Node::FunctionLiteral(statement) => statement.string(),
         }
     }
 }
@@ -291,6 +294,30 @@ impl BlockStatement {
         });
 
         buffer
+    }
+}
+
+#[derive(Debug)]
+pub struct FunctionLiteral {
+    pub token: Token,
+    pub parameters: Vec<Identifier>,
+    pub body: BlockStatement,
+}
+
+impl FunctionLiteral {
+    pub fn token_literal(&self) -> String {
+        self.token.literal.clone()
+    }
+
+    pub fn string(&self) -> String {
+        format!(
+            "({})",
+            self.parameters
+                .iter()
+                .map(|p| p.string())
+                .collect::<Vec<String>>()
+                .join(", ")
+        )
     }
 }
 

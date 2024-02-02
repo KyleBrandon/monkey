@@ -4,9 +4,9 @@ use tracing::{dispatcher::with_default, error, info};
 
 use crate::{
     ast::node::{
-        BlockStatement, BooleanLiteral, ExpressionStatement, Identifier, IfExpression,
-        InfixExpression, IntegerLiteral, LetStatement, Node, Precedence, PrefixExpression, Program,
-        ReturnStatement,
+        BlockStatement, BooleanLiteral, ExpressionStatement, FunctionLiteral, Identifier,
+        IfExpression, InfixExpression, IntegerLiteral, LetStatement, Node, Precedence,
+        PrefixExpression, Program, ReturnStatement,
     },
     lexer::Lexer,
     token::{Token, TokenType},
@@ -191,6 +191,7 @@ impl Parser {
             TokenType::False => self.parse_boolean_literal(token),
             TokenType::LParen => self.parse_grouped_expression(),
             TokenType::If => self.parse_if_expression(token),
+            TokenType::Function => self.parse_function_literal(token),
             _ => {
                 let message = format!("no prefix parse function for {:?} found", token.token_type);
 
@@ -319,20 +320,14 @@ impl Parser {
             return None;
         }
 
-        if !self.expect_peak(TokenType::LBrace) {
+        let Some(consequence) = self.parse_block_statement() else {
             return None;
-        }
-
-        let consequence = self.parse_block_statement();
+        };
 
         let alternative = if self.peek_token_is(TokenType::Else) {
             self.next_token();
 
-            if !self.expect_peak(TokenType::LBrace) {
-                return None;
-            }
-
-            Some(self.parse_block_statement())
+            self.parse_block_statement()
         } else {
             None
         };
@@ -345,7 +340,11 @@ impl Parser {
         }))
     }
 
-    fn parse_block_statement(&mut self) -> BlockStatement {
+    fn parse_block_statement(&mut self) -> Option<BlockStatement> {
+        if !self.expect_peak(TokenType::LBrace) {
+            return None;
+        }
+
         let Some(token) = self.curr_token.clone() else {
             panic!("Expected token in block statement");
         };
@@ -362,7 +361,72 @@ impl Parser {
             self.next_token();
         }
 
-        BlockStatement { token, statements }
+        Some(BlockStatement { token, statements })
+    }
+
+    fn parse_function_literal(&mut self, token: Token) -> Option<Node> {
+        let token = token.clone();
+
+        let Some(parameters) = self.parse_function_parameters() else {
+            return None;
+        };
+
+        let Some(body) = self.parse_block_statement() else {
+            return None;
+        };
+
+        Some(Node::FunctionLiteral(FunctionLiteral {
+            token,
+            parameters,
+            body,
+        }))
+    }
+
+    fn parse_function_parameters(&mut self) -> Option<Vec<Identifier>> {
+        let mut identifiers = Vec::new();
+
+        if !self.expect_peak(TokenType::LParen) {
+            return None;
+        }
+
+        if self.peek_token_is(TokenType::RParen) {
+            self.next_token();
+            return Some(identifiers);
+        }
+
+        self.next_token();
+
+        let Some(token) = self.curr_token.clone() else {
+            return None;
+        };
+
+        let identifier = Identifier {
+            token: token.clone(),
+            value: token.literal.clone(),
+        };
+
+        identifiers.push(identifier);
+
+        while self.peek_token_is(TokenType::Comma) {
+            self.next_token();
+            self.next_token();
+
+            let Some(token) = self.curr_token.clone() else {
+                return None;
+            };
+
+            let identifier = Identifier {
+                token: token.clone(),
+                value: token.literal.clone(),
+            };
+            identifiers.push(identifier);
+        }
+
+        if !self.expect_peak(TokenType::RParen) {
+            return None;
+        }
+
+        Some(identifiers)
     }
 
     fn current_token_is(&self, token_type: TokenType) -> bool {
@@ -431,7 +495,7 @@ fn init_precedence_lookup() -> HashMap<TokenType, Precedence> {
 #[cfg(test)]
 mod tests {
 
-    use std::{collections::VecDeque, ops::Deref, ptr::write_unaligned};
+    use std::ops::Deref;
 
     use crate::{
         ast::node::{IfExpression, Node},
@@ -870,6 +934,103 @@ return 993322;
         true
     }
 
+    #[test]
+    fn test_function_literal_parsing() {
+        let input = "fn(x, y) { x + y; }";
+
+        let lexer = Lexer::new(input.to_string());
+        let mut parser = Parser::new(lexer);
+        let result = parser.parse_program();
+        match result {
+            Ok(program) => {
+                //
+                let len = program.statements.len();
+                assert_eq!(
+                    len, 1,
+                    "Program.statements does not contain 1 statements. got={}",
+                    len
+                );
+                for statement in program.statements.iter() {
+                    let Node::ExpressionStatement(expr_statement) = statement else {
+                        panic!(
+                            "statement not IfExpression. got={}",
+                            statement.token_literal()
+                        );
+                    };
+                    let Node::FunctionLiteral(function) = expr_statement.expression.deref() else {
+                        panic!(
+                            "statement not IfExpression. got={}",
+                            expr_statement.token_literal()
+                        );
+                    };
+
+                    if function.parameters.len() != 2 {
+                        panic!(
+                            "function literal parameters expected 2. got={}",
+                            function.parameters.len()
+                        );
+                    }
+
+                    test_literal_identifier(&function.parameters[0], "x");
+                    test_literal_identifier(&function.parameters[0], "y");
+
+                    if function.body.statements.len() != 1 {
+                        panic!(
+                            "function.body.statements has not 1 statement. got={}",
+                            function.body.statements.len()
+                        );
+                    }
+
+                    test_infix_expression(&function.body.statements[0], "x", "+", "y");
+                }
+            }
+            Err(e) => panic!("Error parsing program: {:?}", e),
+        }
+    }
+
+    #[test]
+    fn test_function_parameter_parsing() {
+        let tests = [
+            ("fn() {};", vec![]),
+            ("fn(x) {};", vec!["x"]),
+            ("fn(x, y, z) {};", vec!["x", "y", "z"]),
+        ];
+
+        for tt in tests {
+            let lexer = Lexer::new(tt.0.to_string());
+            let mut parser = Parser::new(lexer);
+            let result = parser.parse_program();
+            match result {
+                Ok(program) => {
+                    let Node::ExpressionStatement(expr_statement) = &program.statements[0] else {
+                        panic!("expected expression. got={:?}", program.statements[0]);
+                    };
+
+                    let Node::FunctionLiteral(function) = expr_statement.expression.deref() else {
+                        panic!(
+                            "expected function literal. got={:?}",
+                            expr_statement.expression
+                        );
+                    };
+
+                    if function.parameters.len() != tt.1.len() {
+                        panic!(
+                            "length of parameters wrong for test {}. expected {:?}. got={:?}",
+                            tt.0,
+                            tt.1.len(),
+                            function.parameters.len()
+                        );
+                    }
+
+                    tt.1.iter().enumerate().for_each(|(ix, ident)| {
+                        test_literal_identifier(&function.parameters[ix], ident);
+                    })
+                }
+                Err(e) => panic!("Failed to parse program: {:?}", e),
+            }
+        }
+    }
+
     fn test_literal_expression(expr: &Node, expected: &str) -> bool {
         match expr {
             Node::IntegerLiteral(_) => test_integer_literal(expr, expected),
@@ -972,6 +1133,10 @@ return 993322;
             return false;
         };
 
+        test_literal_identifier(identifier, value)
+    }
+
+    fn test_literal_identifier(identifier: &Identifier, value: &str) -> bool {
         if identifier.value != value {
             println!("identifier.value not {}. got={}", value, identifier.value);
             return false;
