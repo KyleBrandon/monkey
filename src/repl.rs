@@ -1,6 +1,6 @@
 use std::io::stdin;
 
-use crate::{lexer::Lexer, parser::Parser};
+use crate::{eval, lexer::Lexer, node::Node, parser::Parser};
 
 pub fn start_repl() {
     loop {
@@ -19,7 +19,11 @@ pub fn start_repl() {
 
             match result {
                 Ok(program) => {
-                    println!("{}", program.string());
+                    let Some(evaluated) = eval::eval(&program) else {
+                        println!("Error evaluating program");
+                        continue;
+                    };
+                    println!("{}", evaluated.inspect());
                 }
                 Err(e) => {
                     println!("Error: {:?}", e);

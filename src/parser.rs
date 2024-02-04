@@ -3,12 +3,12 @@ use std::collections::HashMap;
 use tracing::{error, info};
 
 use crate::{
-    ast::node::{
+    lexer::Lexer,
+    node::{
         BlockStatement, BooleanLiteral, CallExpression, ExpressionStatement, FunctionLiteral,
         Identifier, IfExpression, InfixExpression, IntegerLiteral, LetStatement, Node, Precedence,
         PrefixExpression, Program, ReturnStatement,
     },
-    lexer::Lexer,
     token::{Token, TokenType},
 };
 
@@ -45,7 +45,7 @@ impl Parser {
         &self.errors
     }
 
-    pub fn parse_program(&mut self) -> Result<Program, ParserError> {
+    pub fn parse_program(&mut self) -> Result<Node, ParserError> {
         let mut program = Program::new();
 
         while let Some(tt) = &self.curr_token {
@@ -64,7 +64,7 @@ impl Parser {
         }
 
         if self.errors.is_empty() {
-            Ok(program)
+            Ok(Node::Program(program))
         } else {
             Err(ParserError {
                 errors: self.errors.clone(),
@@ -553,11 +553,9 @@ mod tests {
 
     use std::ops::Deref;
 
-    use tracing::subscriber::with_default;
-
     use crate::{
-        ast::node::{IfExpression, Node},
         lexer::Lexer,
+        node::{IfExpression, Node},
     };
 
     use super::*;

@@ -353,7 +353,8 @@ impl CallExpression {
 
 #[cfg(test)]
 mod tests {
-    use crate::{ast::node::Node, token::TokenType};
+
+    use crate::{node::Node, token::TokenType};
 
     use super::*;
     #[test]
