@@ -198,7 +198,6 @@ mod tests {
     use super::*;
     #[test]
     fn test_next_token() {
-        tracing_subscriber::fmt().init();
         let input = r#"let five = 5;
 let ten = 10;
 

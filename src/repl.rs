@@ -1,6 +1,6 @@
 use std::io::stdin;
 
-use crate::{eval, lexer::Lexer, node::Node, parser::Parser};
+use crate::{eval, lexer::Lexer, parser::Parser};
 
 pub fn start_repl() {
     loop {

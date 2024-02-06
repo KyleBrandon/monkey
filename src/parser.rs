@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 
-use tracing::{error, info};
+use tracing::error;
 
 use crate::{
     lexer::Lexer,
@@ -49,7 +49,6 @@ impl Parser {
         let mut program = Program::new();
 
         while let Some(tt) = &self.curr_token {
-            info!("parse curr_token: {:?}", tt);
             match tt.token_type {
                 TokenType::EOF => break,
 
@@ -101,7 +100,6 @@ impl Parser {
     }
 
     fn parse_let_statement(&mut self) -> Option<Node> {
-        info!("parse_let_statement");
         let Some(token) = self.curr_token.clone() else {
             return None;
         };
@@ -137,11 +135,10 @@ impl Parser {
             value: Box::new(value),
         };
 
-        return Some(Node::LetStatement(statement));
+        Some(Node::LetStatement(statement))
     }
 
     fn parse_return_statement(&mut self) -> Option<Node> {
-        info!("parse_return_statement");
         let Some(token) = self.curr_token.clone() else {
             return None;
         };
@@ -164,7 +161,6 @@ impl Parser {
     }
 
     fn parse_expression_statement(&mut self) -> Option<Node> {
-        info!("parse_expression_statement");
         if let Some(token) = self.curr_token.clone() {
             if let Some(expression) = self.parse_expression(Precedence::Lowest) {
                 let statement = ExpressionStatement {
@@ -184,8 +180,6 @@ impl Parser {
     }
 
     fn parse_expression(&mut self, precedence: Precedence) -> Option<Node> {
-        info!("parse_expression");
-
         // get the current token
         let Some(token) = self.curr_token.clone() else {
             return None;
@@ -257,7 +251,6 @@ impl Parser {
     }
 
     fn parse_identifier(&self, token: Token) -> Option<Node> {
-        info!("parse_identifier");
         let value = token.literal.clone();
         let ident = Identifier { token, value };
 
@@ -265,7 +258,6 @@ impl Parser {
     }
 
     fn parse_integer_literal(&self, token: Token) -> Option<Node> {
-        info!("parse_integer_literal");
         if let Ok(value) = token.literal.parse::<i64>() {
             Some(Node::IntegerLiteral(IntegerLiteral { token, value }))
         } else {
@@ -274,7 +266,6 @@ impl Parser {
     }
 
     fn parse_boolean_literal(&self, token: Token) -> Option<Node> {
-        info!("parse_boolean_literal");
         Some(Node::BooleanLiteral(BooleanLiteral {
             token,
             value: self.current_token_is(TokenType::True),
@@ -282,7 +273,6 @@ impl Parser {
     }
 
     fn parse_prefix_expression(&mut self, token: Token) -> Option<Node> {
-        info!("parse_prefix_expression");
         let operator = token.literal.clone();
         self.next_token();
         self.parse_expression(Precedence::Prefix).map(|e| {
@@ -561,7 +551,6 @@ mod tests {
     use super::*;
     #[test]
     fn test_let_statement() {
-        tracing_subscriber::fmt().init();
         //
         let tests = [
             ("let x = 5;", "x", "5"),
@@ -576,6 +565,10 @@ mod tests {
             let result = parser.parse_program();
             match result {
                 Ok(program) => {
+                    let Node::Program(program) = program else {
+                        panic!("program is not Program. got={:?}", program);
+                    };
+
                     if program.statements.len() != 1 {
                         panic!(
                             "program.statements does not contain 1 statement. got={:?}",
@@ -602,7 +595,6 @@ mod tests {
 
     #[test]
     fn test_return_statement() {
-        tracing_subscriber::fmt().init();
 
         let tests = [
             ("return 5;", "5"),
@@ -617,6 +609,10 @@ mod tests {
             let result = parser.parse_program();
             match result {
                 Ok(program) => {
+                    let Node::Program(program) = program else {
+                        panic!("program is not Program. got={:?}", program);
+                    };
+
                     let len = program.statements.len();
                     assert_eq!(
                         len, 1,
@@ -659,6 +655,10 @@ mod tests {
         let result = parser.parse_program();
         match result {
             Ok(program) => {
+                let Node::Program(program) = program else {
+                    panic!("program is not Program. got={:?}", program);
+                };
+
                 let len = program.statements.len();
                 assert_eq!(
                     len, 1,
@@ -698,13 +698,16 @@ mod tests {
 
     #[test]
     fn test_integer_literal_expression() {
-        tracing_subscriber::fmt().init();
         let input = "5;";
         let lexer = Lexer::new(input.to_string());
         let mut parser = Parser::new(lexer);
         let result = parser.parse_program();
         match result {
             Ok(program) => {
+                let Node::Program(program) = program else {
+                    panic!("program is not Program. got={:?}", program);
+                };
+
                 let len = program.statements.len();
                 assert_eq!(
                     len, 1,
@@ -746,6 +749,10 @@ mod tests {
             let result = parser.parse_program();
             match result {
                 Ok(program) => {
+                    let Node::Program(program) = program else {
+                        panic!("program is not Program. got={:?}", program);
+                    };
+
                     let len = program.statements.len();
                     assert_eq!(
                         len, 1,
@@ -808,6 +815,10 @@ mod tests {
             let result = parser.parse_program();
             match result {
                 Ok(program) => {
+                    let Node::Program(program) = program else {
+                        panic!("program is not Program. got={:?}", program);
+                    };
+
                     let len = program.statements.len();
                     assert_eq!(
                         len, 1,
@@ -898,6 +909,10 @@ mod tests {
         let result = parser.parse_program();
         match result {
             Ok(program) => {
+                let Node::Program(program) = program else {
+                    panic!("program is not Program. got={:?}", program);
+                };
+
                 let len = program.statements.len();
                 assert_eq!(
                     len, 1,
@@ -943,6 +958,10 @@ mod tests {
         let result = parser.parse_program();
         match result {
             Ok(program) => {
+                let Node::Program(program) = program else {
+                    panic!("program is not Program. got={:?}", program);
+                };
+
                 let len = program.statements.len();
                 assert_eq!(
                     len, 1,
@@ -1027,6 +1046,10 @@ mod tests {
         let result = parser.parse_program();
         match result {
             Ok(program) => {
+                let Node::Program(program) = program else {
+                    panic!("program is not Program. got={:?}", program);
+                };
+
                 //
                 let len = program.statements.len();
                 assert_eq!(
@@ -1086,6 +1109,10 @@ mod tests {
             let result = parser.parse_program();
             match result {
                 Ok(program) => {
+                    let Node::Program(program) = program else {
+                        panic!("program is not Program. got={:?}", program);
+                    };
+
                     let Node::ExpressionStatement(expr_statement) = &program.statements[0] else {
                         panic!("expected expression. got={:?}", program.statements[0]);
                     };
@@ -1123,6 +1150,10 @@ mod tests {
         let result = parser.parse_program();
         match result {
             Ok(program) => {
+                let Node::Program(program) = program else {
+                    panic!("program is not Program. got={:?}", program);
+                };
+
                 //
                 if program.statements.len() != 1 {
                     panic!(
