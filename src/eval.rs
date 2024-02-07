@@ -3,13 +3,13 @@ use std::ops::Deref;
 use tracing::info;
 
 use crate::{
-    node::{IfExpression, Node},
-    object::Object,
+    node::{BlockStatement, IfExpression, Node, Program},
+    object::{Object, ObjectType},
 };
 
 pub fn eval(node: &Node) -> Option<Object> {
     match node {
-        Node::Program(program) => eval_statements(&program.statements),
+        Node::Program(program) => eval_program(program),
         Node::ExpressionStatement(expression) => eval(expression.expression.deref()),
         Node::IntegerLiteral(integer) => Some(Object::Integer(integer.value)),
         Node::BooleanLiteral(boolean) => Some(Object::Boolean(boolean.value)),
@@ -28,8 +28,31 @@ pub fn eval(node: &Node) -> Option<Object> {
             eval_infix_expression(&expr.operator, left, right)
         }
         Node::IfExpression(expr) => eval_if_expression(expr),
+        Node::ReturnStatement(expr) => {
+            let Some(val) = eval(&expr.return_value) else {
+                return None;
+            };
+
+            Some(Object::ReturnValue(Box::new(val)))
+        }
+        Node::BlockStatement(expr) => eval_block_statements(expr),
         _ => None,
     }
+}
+
+fn eval_program(program: &Program) -> Option<Object> {
+    let mut result = None;
+
+    for statement in program.statements.iter() {
+        result = eval(statement);
+
+        if let Some(Object::ReturnValue(result)) = result {
+            let val = result.deref();
+            return Some(val.clone());
+        }
+    }
+
+    result
 }
 
 fn eval_if_expression(expr: &IfExpression) -> Option<Object> {
@@ -39,9 +62,9 @@ fn eval_if_expression(expr: &IfExpression) -> Option<Object> {
     };
 
     if is_truthy(condition) {
-        eval_statements(&expr.consequence.statements)
+        eval(&expr.consequence)
     } else if let Some(alternative) = &expr.alternative {
-        eval_statements(&alternative.statements)
+        eval(alternative)
     } else {
         None
     }
@@ -55,13 +78,17 @@ fn is_truthy(obj: Object) -> bool {
     }
 }
 
-fn eval_statements(statements: &[Node]) -> Option<Object> {
+fn eval_block_statements(block: &BlockStatement) -> Option<Object> {
     let mut result = None;
-
-    for statement in statements {
+    for statement in block.statements.iter() {
+        //
         result = eval(statement);
+        if let Some(obj) = &result {
+            if obj.object_type() == ObjectType::ReturnValue {
+                return Some(obj.clone());
+            }
+        }
     }
-
     result
 }
 
@@ -246,6 +273,27 @@ mod tests {
                     IntOrUnit::Unit => (),
                 },
             }
+        }
+    }
+
+    #[test]
+    fn test_return_statement() {
+        let tests = [
+            ("return 10;", 10),
+            ("return 10; 9;", 10),
+            ("return 2 * 5; 9;", 10),
+            ("9; return 2 * 5; 9;", 10),
+            ("if (10 > 1) { return 10; } else { return 1; }", 10),
+            ("if (10 < 1) { return 10; } else { return 1; }", 1),
+            ("if (10 > 1) { if (10 > 1) { return 10; } return 1; }", 10),
+        ];
+
+        for tt in tests {
+            let Some(evaluated) = test_eval(tt.0) else {
+                panic!("test_eval returned None");
+            };
+
+            test_integer_object(evaluated, tt.1);
         }
     }
 

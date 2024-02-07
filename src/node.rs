@@ -36,6 +36,7 @@ pub enum Node {
     BooleanLiteral(BooleanLiteral),
     PrefixExpression(PrefixExpression),
     InfixExpression(InfixExpression),
+    BlockStatement(BlockStatement),
     IfExpression(IfExpression),
     FunctionLiteral(FunctionLiteral),
     CallExpression(CallExpression),
@@ -49,14 +50,15 @@ impl Node {
             Node::LetStatement(let_statement) => let_statement.token_literal(),
             Node::Identifier(identifier) => identifier.token_literal(),
             Node::ReturnStatement(statement) => statement.token_literal(),
-            Node::ExpressionStatement(statement) => statement.token_literal(),
+            Node::ExpressionStatement(expr) => expr.token_literal(),
             Node::IntegerLiteral(statement) => statement.token_literal(),
             Node::BooleanLiteral(statement) => statement.token_literal(),
-            Node::PrefixExpression(statement) => statement.token_literal(),
-            Node::InfixExpression(statement) => statement.token_literal(),
-            Node::IfExpression(statement) => statement.token_literal(),
+            Node::PrefixExpression(expr) => expr.token_literal(),
+            Node::InfixExpression(expr) => expr.token_literal(),
+            Node::IfExpression(expr) => expr.token_literal(),
             Node::FunctionLiteral(statement) => statement.token_literal(),
-            Node::CallExpression(statement) => statement.token_literal(),
+            Node::CallExpression(expr) => expr.token_literal(),
+            Node::BlockStatement(expr) => expr.token_literal(),
         }
     }
 
@@ -70,11 +72,12 @@ impl Node {
             Node::ExpressionStatement(statement) => statement.string(),
             Node::IntegerLiteral(statement) => statement.string(),
             Node::BooleanLiteral(statement) => statement.string(),
-            Node::PrefixExpression(statement) => statement.string(),
-            Node::InfixExpression(statement) => statement.string(),
-            Node::IfExpression(statement) => statement.string(),
+            Node::PrefixExpression(expr) => expr.string(),
+            Node::InfixExpression(expr) => expr.string(),
+            Node::IfExpression(expr) => expr.string(),
             Node::FunctionLiteral(statement) => statement.string(),
-            Node::CallExpression(statement) => statement.string(),
+            Node::CallExpression(expr) => expr.string(),
+            Node::BlockStatement(expr) => expr.string(),
         }
     }
 }
@@ -254,8 +257,8 @@ impl BooleanLiteral {
 pub struct IfExpression {
     pub token: Token,
     pub condition: Box<Node>,
-    pub consequence: BlockStatement,
-    pub alternative: Option<BlockStatement>,
+    pub consequence: Box<Node>,
+    pub alternative: Option<Box<Node>>,
 }
 
 impl IfExpression {
@@ -306,7 +309,7 @@ impl BlockStatement {
 pub struct FunctionLiteral {
     pub token: Token,
     pub parameters: Vec<Identifier>,
-    pub body: BlockStatement,
+    pub body: Box<Node>,
 }
 
 impl FunctionLiteral {

@@ -326,7 +326,6 @@ impl Parser {
 
         let alternative = if self.peek_token_is(TokenType::Else) {
             self.next_token();
-
             self.parse_block_statement()
         } else {
             None
@@ -335,12 +334,12 @@ impl Parser {
         Some(Node::IfExpression(IfExpression {
             token,
             condition: Box::new(condition),
-            consequence,
-            alternative,
+            consequence: Box::new(consequence),
+            alternative: alternative.map(Box::new),
         }))
     }
 
-    fn parse_block_statement(&mut self) -> Option<BlockStatement> {
+    fn parse_block_statement(&mut self) -> Option<Node> {
         if !self.expect_peak(TokenType::LBrace) {
             return None;
         }
@@ -361,7 +360,7 @@ impl Parser {
             self.next_token();
         }
 
-        Some(BlockStatement { token, statements })
+        Some(Node::BlockStatement(BlockStatement { token, statements }))
     }
 
     fn parse_function_literal(&mut self, token: Token) -> Option<Node> {
@@ -378,7 +377,7 @@ impl Parser {
         Some(Node::FunctionLiteral(FunctionLiteral {
             token,
             parameters,
-            body,
+            body: Box::new(body),
         }))
     }
 
@@ -595,7 +594,6 @@ mod tests {
 
     #[test]
     fn test_return_statement() {
-
         let tests = [
             ("return 5;", "5"),
             ("return true;", "true"),
@@ -986,24 +984,25 @@ mod tests {
                         return;
                     }
 
-                    if let Some(alternative) = &expr.alternative {
-                        if alternative.statements.len() != 1 {
-                            panic!(
+                    if let Some(boxed_alternative) = &expr.alternative {
+                        if let Node::BlockStatement(alternative) = boxed_alternative.deref() {
+                            if alternative.statements.len() != 1 {
+                                panic!(
                                 "exp.alternative.statements does not contain 1 statements. got={}",
                                 alternative.statements.len()
                             );
-                        }
+                            }
+                            let Node::ExpressionStatement(alt) = &alternative.statements[0] else {
+                                panic!(
+                                    "Statements[0] is not ExpressionStatement. got={:?}",
+                                    alternative.statements[0]
+                                );
+                            };
 
-                        let Node::ExpressionStatement(alt) = &alternative.statements[0] else {
-                            panic!(
-                                "Statements[0] is not ExpressionStatement. got={:?}",
-                                alternative.statements[0]
-                            );
+                            if !test_identifier(alt.expression.deref(), "y") {
+                                return;
+                            }
                         };
-
-                        if !test_identifier(alt.expression.deref(), "y") {
-                            return;
-                        }
                     }
                 }
             }
@@ -1016,23 +1015,25 @@ mod tests {
             return false;
         }
 
-        if expr.consequence.statements.len() != 1 {
-            panic!(
-                "consequence is not 1 statement. got={}",
-                expr.consequence.statements.len()
-            );
-        }
+        if let Node::BlockStatement(consequence) = expr.consequence.deref() {
+            if consequence.statements.len() != 1 {
+                panic!(
+                    "consequence is not 1 statement. got={}",
+                    consequence.statements.len()
+                );
+            }
 
-        let Node::ExpressionStatement(consequence) = &expr.consequence.statements[0] else {
-            panic!(
-                "Statements is not ExpressionStatement. got={:?}",
-                expr.consequence.statements[0]
-            );
+            let Node::ExpressionStatement(consequence) = &consequence.statements[0] else {
+                panic!(
+                    "Statements is not ExpressionStatement. got={:?}",
+                    consequence.statements[0]
+                );
+            };
+
+            if !test_identifier(consequence.expression.deref(), "x") {
+                return false;
+            }
         };
-
-        if !test_identifier(consequence.expression.deref(), "x") {
-            return false;
-        }
 
         true
     }
@@ -1081,14 +1082,16 @@ mod tests {
                     test_literal_identifier(&function.parameters[0], "x");
                     test_literal_identifier(&function.parameters[0], "y");
 
-                    if function.body.statements.len() != 1 {
-                        panic!(
-                            "function.body.statements has not 1 statement. got={}",
-                            function.body.statements.len()
-                        );
-                    }
+                    if let Node::BlockStatement(body) = function.body.deref() {
+                        if body.statements.len() != 1 {
+                            panic!(
+                                "function.body.statements has not 1 statement. got={}",
+                                body.statements.len()
+                            );
+                        }
 
-                    test_infix_expression(&function.body.statements[0], "x", "+", "y");
+                        test_infix_expression(&body.statements[0], "x", "+", "y");
+                    };
                 }
             }
             Err(e) => panic!("Error parsing program: {:?}", e),
