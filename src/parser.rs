@@ -1,7 +1,5 @@
 use std::collections::HashMap;
 
-use tracing::error;
-
 use crate::{
     lexer::Lexer,
     node::{
@@ -78,7 +76,6 @@ impl Parser {
             self.peek_token.clone().unwrap().token_type
         );
 
-        error!("{}", message);
         self.errors.push(message);
     }
 
@@ -100,22 +97,23 @@ impl Parser {
     }
 
     fn parse_let_statement(&mut self) -> Option<Node> {
-        let Some(token) = self.curr_token.clone() else {
+        let Some(let_token) = self.curr_token.clone() else {
             return None;
         };
 
         if !self.expect_peak(TokenType::Ident) {
-            error!("parse_let_statement: missing Ident");
             return None;
         }
 
+        let Some(ident_token) = self.curr_token.clone() else {
+            return None;
+        };
         let name = Identifier {
-            token: token.clone(),
-            value: token.literal.clone(),
+            token: ident_token.clone(),
+            value: ident_token.literal.clone(),
         };
 
         if !self.expect_peak(TokenType::Assign) {
-            error!("parse_let_statement: missing Assign");
             return None;
         }
 
@@ -130,7 +128,7 @@ impl Parser {
         }
 
         let statement = LetStatement {
-            token: token.clone(),
+            token: let_token.clone(),
             name,
             value: Box::new(value),
         };
@@ -198,7 +196,6 @@ impl Parser {
             _ => {
                 let message = format!("no prefix parse function for {:?} found", token.token_type);
 
-                error!("{}", message);
                 self.errors.push(message);
                 None
             }

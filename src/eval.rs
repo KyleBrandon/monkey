@@ -1,50 +1,118 @@
 use std::ops::Deref;
 
-use tracing::info;
-
 use crate::{
-    node::{BlockStatement, IfExpression, Node, Program},
+    node::{BlockStatement, Identifier, IfExpression, Node, Program},
     object::{Object, ObjectType},
 };
 
-pub fn eval(node: &Node) -> Option<Object> {
+pub struct Environment {
+    store: std::collections::HashMap<String, Object>,
+}
+
+impl Environment {
+    pub fn new() -> Self {
+        Self {
+            store: std::collections::HashMap::new(),
+        }
+    }
+    pub fn get(&self, name: &str) -> Option<Object> {
+        self.store.get(name).cloned()
+    }
+    pub fn set(&mut self, name: String, value: Object) -> Option<Object> {
+        self.store.insert(name, value)
+    }
+}
+
+impl Default for Environment {
+    fn default() -> Self {
+        Environment::new()
+    }
+}
+
+pub fn eval(node: &Node, env: &mut Environment) -> Option<Object> {
     match node {
-        Node::Program(program) => eval_program(program),
-        Node::ExpressionStatement(expression) => eval(expression.expression.deref()),
+        Node::Program(program) => eval_program(program, env),
+        Node::ExpressionStatement(expression) => eval(expression.expression.deref(), env),
         Node::IntegerLiteral(integer) => Some(Object::Integer(integer.value)),
         Node::BooleanLiteral(boolean) => Some(Object::Boolean(boolean.value)),
         Node::PrefixExpression(expr) => {
             //
-            let Some(right) = eval(expr.right.deref()) else {
+            let Some(right) = eval(expr.right.deref(), env) else {
                 return None;
             };
+
+            if is_error(&right) {
+                return Some(right);
+            }
 
             eval_prefix_expression(&expr.operator, right)
         }
         Node::InfixExpression(expr) => {
-            let left = eval(expr.left.deref());
-            let right = eval(expr.right.deref());
+            let left = eval(expr.left.deref(), env);
+            if let Some(Object::Error(_)) = left {
+                return left;
+            };
+
+            let right = eval(expr.right.deref(), env);
+            if let Some(Object::Error(_)) = right {
+                return right;
+            };
 
             eval_infix_expression(&expr.operator, left, right)
         }
-        Node::IfExpression(expr) => eval_if_expression(expr),
+        Node::IfExpression(expr) => eval_if_expression(expr, env),
         Node::ReturnStatement(expr) => {
-            let Some(val) = eval(&expr.return_value) else {
+            let Some(val) = eval(&expr.return_value, env) else {
                 return None;
             };
 
+            if is_error(&val) {
+                return Some(val);
+            }
+
             Some(Object::ReturnValue(Box::new(val)))
         }
-        Node::BlockStatement(expr) => eval_block_statements(expr),
+        Node::BlockStatement(expr) => eval_block_statements(expr, env),
+        Node::LetStatement(expr) => eval(&expr.value, env).map(|val| {
+            if is_error(&val) {
+                return val;
+            }
+            env.set(expr.name.value.clone(), val.clone());
+            val
+        }),
+        Node::Identifier(ident) => eval_identifier(ident, env),
         _ => None,
     }
 }
 
-fn eval_program(program: &Program) -> Option<Object> {
+fn is_error(obj: &Object) -> bool {
+    obj.object_type() == ObjectType::Error
+}
+
+fn eval_identifier(ident: &Identifier, env: &mut Environment) -> Option<Object> {
+    match env.get(&ident.value) {
+        Some(val) => Some(val),
+        None => Some(Object::Error(format!(
+            "identifier not found: {}",
+            ident.value
+        ))),
+    }
+}
+
+fn eval_program(program: &Program, env: &mut Environment) -> Option<Object> {
     let mut result = None;
 
     for statement in program.statements.iter() {
-        result = eval(statement);
+        result = eval(statement, env);
+
+        match result {
+            Some(Object::ReturnValue(result)) => {
+                let val = result.deref();
+                return Some(val.clone());
+            }
+            Some(Object::Error(_)) => return result,
+            _ => (),
+        }
 
         if let Some(Object::ReturnValue(result)) = result {
             let val = result.deref();
@@ -55,16 +123,19 @@ fn eval_program(program: &Program) -> Option<Object> {
     result
 }
 
-fn eval_if_expression(expr: &IfExpression) -> Option<Object> {
-    info!("eval_if_expression: {:?}", expr);
-    let Some(condition) = eval(&expr.condition) else {
+fn eval_if_expression(expr: &IfExpression, env: &mut Environment) -> Option<Object> {
+    let Some(condition) = eval(&expr.condition, env) else {
         return None;
     };
 
+    if is_error(&condition) {
+        return Some(condition);
+    }
+
     if is_truthy(condition) {
-        eval(&expr.consequence)
+        eval(&expr.consequence, env)
     } else if let Some(alternative) = &expr.alternative {
-        eval(alternative)
+        eval(alternative, env)
     } else {
         None
     }
@@ -78,13 +149,15 @@ fn is_truthy(obj: Object) -> bool {
     }
 }
 
-fn eval_block_statements(block: &BlockStatement) -> Option<Object> {
+fn eval_block_statements(block: &BlockStatement, env: &mut Environment) -> Option<Object> {
     let mut result = None;
     for statement in block.statements.iter() {
         //
-        result = eval(statement);
+        result = eval(statement, env);
         if let Some(obj) = &result {
-            if obj.object_type() == ObjectType::ReturnValue {
+            if obj.object_type() == ObjectType::ReturnValue
+                || obj.object_type() == ObjectType::Error
+            {
                 return Some(obj.clone());
             }
         }
@@ -96,14 +169,21 @@ fn eval_prefix_expression(operator: &str, right: Object) -> Option<Object> {
     match operator {
         "!" => eval_bang_operator_expression(right),
         "-" => eval_minus_operator_expression(right),
-        _ => None,
+        _ => Some(Object::Error(format!(
+            "unknown operator: {}{}",
+            operator,
+            right.object_type()
+        ))),
     }
 }
 
 fn eval_minus_operator_expression(right: Object) -> Option<Object> {
     match right {
         Object::Integer(i) => Some(Object::Integer(-i)),
-        _ => None,
+        _ => Some(Object::Error(format!(
+            "unknown operator: -{}",
+            right.object_type()
+        ))),
     }
 }
 
@@ -120,14 +200,35 @@ fn eval_infix_expression(
     left: Option<Object>,
     right: Option<Object>,
 ) -> Option<Object> {
-    match (left, right) {
+    match (left.clone(), right.clone()) {
         (Some(Object::Integer(left)), Some(Object::Integer(right))) => {
             eval_integer_infix_expression(operator, left, right)
         }
         (Some(Object::Boolean(left)), Some(Object::Boolean(right))) => {
             eval_boolean_infix_expression(operator, left, right)
         }
-        _ => None,
+
+        (Some(left), Some(right)) => {
+            if left.object_type() != right.object_type() {
+                Some(Object::Error(format!(
+                    "type mismatch: {} {} {}",
+                    left.object_type(),
+                    operator,
+                    right.object_type()
+                )))
+            } else {
+                Some(Object::Error(format!(
+                    "unknown operand: {} {} {}",
+                    left.object_type(),
+                    operator,
+                    right.object_type()
+                )))
+            }
+        }
+        _ => Some(Object::Error(format!(
+            "invalid operand: {:?} {} {:?}",
+            left, operator, right
+        ))),
     }
 }
 
@@ -141,8 +242,10 @@ fn eval_integer_infix_expression(operator: &str, left: i64, right: i64) -> Optio
         ">" => Some(Object::Boolean(left > right)),
         "==" => Some(Object::Boolean(left == right)),
         "!=" => Some(Object::Boolean(left != right)),
-
-        _ => None,
+        _ => Some(Object::Error(format!(
+            "unknown operator: {} {} {}",
+            left, operator, right
+        ))),
     }
 }
 
@@ -150,8 +253,10 @@ fn eval_boolean_infix_expression(operator: &str, left: bool, right: bool) -> Opt
     match operator {
         "==" => Some(Object::Boolean(left == right)),
         "!=" => Some(Object::Boolean(left != right)),
-
-        _ => None,
+        _ => Some(Object::Error(format!(
+            "unknown operator: BOOLEAN {} BOOLEAN",
+            operator
+        ))),
     }
 }
 
@@ -297,12 +402,62 @@ mod tests {
         }
     }
 
+    #[test]
+    fn test_error_handling() {
+        let tests = [
+            ("5 + true;", "type mismatch: INTEGER + BOOLEAN"),
+            ("5 + true; 5;", "type mismatch: INTEGER + BOOLEAN"),
+            ("-true", "unknown operator: -BOOLEAN"),
+            ("true + false;", "unknown operator: BOOLEAN + BOOLEAN"),
+            ("5; true + false; 5", "unknown operator: BOOLEAN + BOOLEAN"),
+            (
+                "if (10 > 1) { true + false; }",
+                "unknown operator: BOOLEAN + BOOLEAN",
+            ),
+            (
+                "if (10 > 1) { if (10 > 1) { return true + false; } return 1; }",
+                "unknown operator: BOOLEAN + BOOLEAN",
+            ),
+            ("foobar", "identifier not found: foobar"),
+        ];
+
+        for tt in tests {
+            match test_eval(tt.0) {
+                Some(evaluated) => match evaluated {
+                    Object::Error(e) => assert_eq!(e, tt.1),
+                    _ => panic!("no error object returned."),
+                },
+                None => panic!("test_eval returned None"),
+            }
+        }
+    }
+
+    #[test]
+    fn test_let_statements() {
+        tracing_subscriber::fmt().init();
+        let tests = [
+            ("let a = 5; a;", 5),
+            ("let a = 5 * 5; a;", 25),
+            ("let a = 5; let b = a; b;", 5),
+            ("let a = 5; let b = a; let c = a + b + 5; c;", 15),
+        ];
+
+        for tt in tests {
+            let Some(evaluated) = test_eval(tt.0) else {
+                panic!("test_eval returned None");
+            };
+
+            test_integer_object(evaluated, tt.1);
+        }
+    }
+
     fn test_eval(input: &str) -> Option<Object> {
         let l = Lexer::new(input.to_string());
         let mut p = Parser::new(l);
         let result = p.parse_program();
+        let env = &mut Environment::new();
         match result {
-            Ok(program) => eval(&program),
+            Ok(program) => eval(&program, env),
             Err(e) => panic!("parser error: {:?}", e),
         }
     }

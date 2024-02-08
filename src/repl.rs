@@ -1,6 +1,10 @@
 use std::io::stdin;
 
-use crate::{eval, lexer::Lexer, parser::Parser};
+use crate::{
+    eval::{self, Environment},
+    lexer::Lexer,
+    parser::Parser,
+};
 
 pub fn start_repl() {
     loop {
@@ -10,6 +14,7 @@ pub fn start_repl() {
             let lexer = Lexer::new(input);
             let mut parser = Parser::new(lexer);
             let result = parser.parse_program();
+            let mut env = Environment::new();
 
             if !parser.errors().is_empty() {
                 for error in parser.errors() {
@@ -19,7 +24,7 @@ pub fn start_repl() {
 
             match result {
                 Ok(program) => {
-                    let Some(evaluated) = eval::eval(&program) else {
+                    let Some(evaluated) = eval::eval(&program, &mut env) else {
                         println!("Error evaluating program");
                         continue;
                     };

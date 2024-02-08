@@ -114,6 +114,12 @@ impl Program {
     }
 }
 
+impl Default for Program {
+    fn default() -> Self {
+        Program::new()
+    }
+}
+
 #[derive(Debug)]
 pub struct Identifier {
     pub token: Token,

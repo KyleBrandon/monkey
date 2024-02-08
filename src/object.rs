@@ -1,9 +1,29 @@
+use core::fmt;
+use std::fmt::{Display, Formatter};
+
 #[derive(Debug, PartialEq)]
 pub enum ObjectType {
     Integer,
     Boolean,
     Null,
     ReturnValue,
+    Error,
+}
+
+impl Display for ObjectType {
+    fn fmt(&self, f: &mut Formatter) -> fmt::Result {
+        write!(
+            f,
+            "{}",
+            match self {
+                ObjectType::Integer => "INTEGER",
+                ObjectType::Boolean => "BOOLEAN",
+                ObjectType::Null => "NULL",
+                ObjectType::ReturnValue => "RETURN_VALUE",
+                ObjectType::Error => "ERROR",
+            }
+        )
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -12,6 +32,7 @@ pub enum Object {
     Boolean(bool),
     Null,
     ReturnValue(Box<Object>),
+    Error(String),
 }
 
 impl Object {
@@ -21,6 +42,7 @@ impl Object {
             Object::Boolean(_) => ObjectType::Boolean,
             Object::Null => ObjectType::Null,
             Object::ReturnValue(_) => ObjectType::ReturnValue,
+            Object::Error(_) => ObjectType::Error,
         }
     }
 
@@ -30,6 +52,7 @@ impl Object {
             Object::Boolean(b) => b.to_string(),
             Object::Null => "null".to_string(),
             Object::ReturnValue(obj) => obj.inspect(),
+            Object::Error(e) => e.to_string(),
         }
     }
 }
