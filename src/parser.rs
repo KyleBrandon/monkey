@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::{collections::HashMap, rc::Rc};
 
 use crate::{
     lexer::Lexer,
@@ -373,8 +373,8 @@ impl Parser {
 
         Some(Node::FunctionLiteral(FunctionLiteral {
             token,
-            parameters,
-            body: Box::new(body),
+            parameters: Rc::new(parameters),
+            body: Rc::new(body),
         }))
     }
 

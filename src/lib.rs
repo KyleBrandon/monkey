@@ -1,3 +1,4 @@
+pub mod environment;
 pub mod eval;
 pub mod lexer;
 pub mod node;

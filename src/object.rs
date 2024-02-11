@@ -1,5 +1,15 @@
 use core::fmt;
-use std::fmt::{Display, Formatter};
+use std::{
+    fmt::{Display, Formatter},
+    rc::Rc,
+};
+
+use itertools::Itertools;
+
+use crate::{
+    environment::Environment,
+    node::{Identifier, Node},
+};
 
 #[derive(Debug, PartialEq)]
 pub enum ObjectType {
@@ -8,6 +18,7 @@ pub enum ObjectType {
     Null,
     ReturnValue,
     Error,
+    Function,
 }
 
 impl Display for ObjectType {
@@ -21,6 +32,7 @@ impl Display for ObjectType {
                 ObjectType::Null => "NULL",
                 ObjectType::ReturnValue => "RETURN_VALUE",
                 ObjectType::Error => "ERROR",
+                ObjectType::Function => "FUNCTION",
             }
         )
     }
@@ -33,6 +45,7 @@ pub enum Object {
     Null,
     ReturnValue(Box<Object>),
     Error(String),
+    Function(Function),
 }
 
 impl Object {
@@ -43,6 +56,7 @@ impl Object {
             Object::Null => ObjectType::Null,
             Object::ReturnValue(_) => ObjectType::ReturnValue,
             Object::Error(_) => ObjectType::Error,
+            Object::Function(_) => ObjectType::Function,
         }
     }
 
@@ -53,6 +67,39 @@ impl Object {
             Object::Null => "null".to_string(),
             Object::ReturnValue(obj) => obj.inspect(),
             Object::Error(e) => e.to_string(),
+            Object::Function(f) => {
+                let mut buffer = String::new();
+
+                if f.parameters.is_empty() {
+                    buffer.push_str("fn() {\n");
+                } else {
+                    buffer.push_str("fn(");
+                    buffer.push_str(&f.parameters.iter().map(|p| p.string()).join(", "));
+                    buffer.push_str(") {\n");
+                }
+
+                buffer.push_str(&f.body.string());
+                buffer.push_str("\n}");
+
+                buffer
+            }
+        }
+    }
+}
+
+#[derive(Debug)]
+pub struct Function {
+    pub parameters: Rc<Vec<Identifier>>,
+    pub body: Rc<Node>,
+    pub env: Environment,
+}
+
+impl Clone for Function {
+    fn clone(&self) -> Self {
+        Function {
+            parameters: Rc::clone(&self.parameters),
+            body: Rc::clone(&self.body),
+            env: self.env.clone(),
         }
     }
 }

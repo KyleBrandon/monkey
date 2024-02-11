@@ -1,12 +1,9 @@
 use std::io::stdin;
 
-use crate::{
-    eval::{self, Environment},
-    lexer::Lexer,
-    parser::Parser,
-};
+use crate::{environment::Environment, eval, lexer::Lexer, parser::Parser};
 
 pub fn start_repl() {
+    let mut env = Environment::new();
     loop {
         print!(">> ");
         let mut input = String::new();
@@ -14,7 +11,6 @@ pub fn start_repl() {
             let lexer = Lexer::new(input);
             let mut parser = Parser::new(lexer);
             let result = parser.parse_program();
-            let mut env = Environment::new();
 
             if !parser.errors().is_empty() {
                 for error in parser.errors() {

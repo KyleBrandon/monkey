@@ -1,33 +1,10 @@
-use std::ops::Deref;
+use std::{ops::Deref, rc::Rc};
 
 use crate::{
+    environment::Environment,
     node::{BlockStatement, Identifier, IfExpression, Node, Program},
-    object::{Object, ObjectType},
+    object::{Function, Object, ObjectType},
 };
-
-pub struct Environment {
-    store: std::collections::HashMap<String, Object>,
-}
-
-impl Environment {
-    pub fn new() -> Self {
-        Self {
-            store: std::collections::HashMap::new(),
-        }
-    }
-    pub fn get(&self, name: &str) -> Option<Object> {
-        self.store.get(name).cloned()
-    }
-    pub fn set(&mut self, name: String, value: Object) -> Option<Object> {
-        self.store.insert(name, value)
-    }
-}
-
-impl Default for Environment {
-    fn default() -> Self {
-        Environment::new()
-    }
-}
 
 pub fn eval(node: &Node, env: &mut Environment) -> Option<Object> {
     match node {
@@ -81,12 +58,84 @@ pub fn eval(node: &Node, env: &mut Environment) -> Option<Object> {
             val
         }),
         Node::Identifier(ident) => eval_identifier(ident, env),
+        Node::FunctionLiteral(func) => Some(Object::Function(Function {
+            parameters: Rc::clone(&func.parameters),
+            body: Rc::clone(&func.body),
+            env: env.clone(),
+        })),
+        Node::CallExpression(expr) => {
+            let func = expr.function.deref();
+            let Some(function) = eval(func, env) else {
+                return None;
+            };
+
+            if is_error(&function) {
+                return Some(function);
+            }
+
+            let args = eval_expressions(&expr.arguments, env);
+            if args.len() == 1 && is_error(&args[0]) {
+                return Some(args[0].clone());
+            }
+
+            apply_function(&function, &args)
+        }
         _ => None,
     }
 }
 
 fn is_error(obj: &Object) -> bool {
     obj.object_type() == ObjectType::Error
+}
+
+fn eval_expressions(exprs: &Vec<Node>, env: &mut Environment) -> Vec<Object> {
+    let mut result = vec![];
+
+    for expr in exprs {
+        let Some(evaluated) = eval(expr, env) else {
+            return vec![];
+        };
+
+        if is_error(&evaluated) {
+            return vec![evaluated];
+        }
+
+        result.push(evaluated);
+    }
+
+    result
+}
+
+fn apply_function(func: &Object, args: &Vec<Object>) -> Option<Object> {
+    match func {
+        Object::Function(function) => {
+            //
+            let mut extended_env = extended_function_env(function, args);
+            let evaluated = eval(function.body.deref(), &mut extended_env);
+            unwrap_result_valud(evaluated)
+        }
+        _ => Some(Object::Error(format!(
+            "not a function: {}",
+            func.object_type()
+        ))),
+    }
+}
+
+fn extended_function_env(function: &Function, args: &Vec<Object>) -> Environment {
+    let mut env = Environment::new_enclosed(function.env.clone());
+    for (i, param) in function.parameters.iter().enumerate() {
+        env.set(param.value.clone(), args[i].clone());
+    }
+
+    env
+}
+
+fn unwrap_result_valud(evaluated: Option<Object>) -> Option<Object> {
+    if let Some(Object::ReturnValue(val)) = evaluated {
+        Some(*val)
+    } else {
+        evaluated
+    }
 }
 
 fn eval_identifier(ident: &Identifier, env: &mut Environment) -> Option<Object> {
@@ -112,11 +161,6 @@ fn eval_program(program: &Program, env: &mut Environment) -> Option<Object> {
             }
             Some(Object::Error(_)) => return result,
             _ => (),
-        }
-
-        if let Some(Object::ReturnValue(result)) = result {
-            let val = result.deref();
-            return Some(val.clone());
         }
     }
 
@@ -449,6 +493,54 @@ mod tests {
 
             test_integer_object(evaluated, tt.1);
         }
+    }
+
+    #[test]
+    fn test_function_object() {
+        let input = "fn(x) { x + 2; };";
+        let Some(evaluated) = test_eval(input) else {
+            panic!("test_eval returned None");
+        };
+        match evaluated {
+            Object::Function(func) => {
+                assert_eq!(func.parameters.len(), 1);
+                assert_eq!(func.parameters[0].value, "x");
+                assert_eq!(func.body.string(), "(x + 2)");
+            }
+            _ => panic!("object is not Function. got={:?}", evaluated),
+        }
+    }
+
+    #[test]
+    fn test_function_application() {
+        let tests = [
+            ("let identity = fn(x) { x; }; identity(5);", 5),
+            ("let identity = fn(x) { return x; }; identity(5);", 5),
+            ("let double = fn(x) { x * 2; }; double(5);", 10),
+            ("let add = fn(x, y) { x + y; }; add(5, 5);", 10),
+            ("let add = fn(x, y) { x + y; }; add(5 + 5, add(5, 5));", 20),
+            ("fn(x) { x; }(5)", 5),
+        ];
+
+        for tt in tests {
+            let Some(evaluated) = test_eval(tt.0) else {
+                panic!("test_eval returned None");
+            };
+            test_integer_object(evaluated, tt.1);
+        }
+    }
+
+    #[test]
+    fn test_closures() {
+        let input = r#"
+        let newAdder = fn(x) {
+            fn(y) { x + y };
+        };
+        let addTwo = newAdder(2);
+        addTwo(3);
+        "#;
+
+        test_integer_object(test_eval(input).unwrap(), 5);
     }
 
     fn test_eval(input: &str) -> Option<Object> {

@@ -1,4 +1,4 @@
-use std::ops::Deref;
+use std::{ops::Deref, rc::Rc};
 
 use crate::token::Token;
 
@@ -314,8 +314,8 @@ impl BlockStatement {
 #[derive(Debug)]
 pub struct FunctionLiteral {
     pub token: Token,
-    pub parameters: Vec<Identifier>,
-    pub body: Box<Node>,
+    pub parameters: Rc<Vec<Identifier>>,
+    pub body: Rc<Node>,
 }
 
 impl FunctionLiteral {
