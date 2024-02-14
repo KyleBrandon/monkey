@@ -100,6 +100,11 @@ impl Lexer {
                     self.read_char();
                     Token::new(TokenType::Semicolon, tok.to_string())
                 }
+                '"' => {
+                    self.read_char();
+                    let literal = self.read_string();
+                    Token::new(TokenType::String, literal)
+                }
 
                 c if self.is_identifier(c) => {
                     //
@@ -166,6 +171,22 @@ impl Lexer {
         self.input[position..self.position].to_string()
     }
 
+    fn read_string(&mut self) -> String {
+        let position = self.position;
+        while let Some(ch) = self.ch {
+            if ch == '"' {
+                break;
+            }
+            self.read_char();
+        }
+        // save the characters between the quotes
+        let ret = self.input[position..self.position].to_string();
+        // skip the closing quote
+        self.read_char();
+
+        ret
+    }
+
     fn is_identifier(&self, ch: char) -> bool {
         ch.is_ascii_alphabetic() || ch == '_'
     }
@@ -223,6 +244,10 @@ if (5 < 10) {
 10 == 10;
 
 10 != 9;
+
+"foobar"
+
+"foo bar"
 
 "#;
 
@@ -299,6 +324,8 @@ if (5 < 10) {
             (TokenType::NotEqual, "!="),
             (TokenType::Int, "9"),
             (TokenType::Semicolon, ";"),
+            (TokenType::String, "foobar"),
+            (TokenType::String, "foo bar"),
             (TokenType::EOF, ""),
         ];
 

@@ -5,7 +5,7 @@ use crate::{
     node::{
         BlockStatement, BooleanLiteral, CallExpression, ExpressionStatement, FunctionLiteral,
         Identifier, IfExpression, InfixExpression, IntegerLiteral, LetStatement, Node, Precedence,
-        PrefixExpression, Program, ReturnStatement,
+        PrefixExpression, Program, ReturnStatement, StringLiteral,
     },
     token::{Token, TokenType},
 };
@@ -193,6 +193,7 @@ impl Parser {
             TokenType::LParen => self.parse_grouped_expression(),
             TokenType::If => self.parse_if_expression(token),
             TokenType::Function => self.parse_function_literal(token),
+            TokenType::String => self.parse_string_literal(token),
             _ => {
                 let message = format!("no prefix parse function for {:?} found", token.token_type);
 
@@ -266,6 +267,13 @@ impl Parser {
         Some(Node::BooleanLiteral(BooleanLiteral {
             token,
             value: self.current_token_is(TokenType::True),
+        }))
+    }
+
+    fn parse_string_literal(&self, token: Token) -> Option<Node> {
+        Some(Node::StringLiteral(StringLiteral {
+            token: token.clone(),
+            value: token.literal.clone(),
         }))
     }
 
@@ -1199,6 +1207,50 @@ mod tests {
         }
     }
 
+    #[test]
+    fn test_string_literal_expression() {
+        let input = r#""hello world";"#;
+
+        let lexer = Lexer::new(input.to_string());
+        let mut parser = Parser::new(lexer);
+        let result = parser.parse_program();
+        match result {
+            Ok(program) => {
+                let Node::Program(program) = program else {
+                    panic!("program is not Program. got={:?}", program);
+                };
+
+                if program.statements.len() != 1 {
+                    panic!(
+                        "program.statements does not contain 1 statments. got={}",
+                        program.statements.len()
+                    );
+                }
+
+                let Node::ExpressionStatement(expr_statement) = &program.statements[0] else {
+                    panic!(
+                        "statement ir not ExpressionStatement. got={:?}",
+                        program.statements[0]
+                    );
+                };
+
+                let Node::StringLiteral(string_literal) = &expr_statement.expression.deref() else {
+                    panic!(
+                        "expression is not a StringLiteral. got={:?}",
+                        expr_statement.expression.deref()
+                    );
+                };
+                if string_literal.value != "hello world" {
+                    panic!(
+                        "string_literal.value is not 'hello world'. got={:?}",
+                        string_literal.value
+                    );
+                }
+            }
+            Err(e) => panic!("Failed to parse program: {:?}", e),
+        }
+    }
+
     fn test_literal_expression(expr: &Node, expected: &str) -> bool {
         match expr {
             Node::IntegerLiteral(_) => test_integer_literal(expr, expected),
@@ -1319,21 +1371,6 @@ mod tests {
             return false;
         }
         true
-    }
-
-    fn test_program_statement(program: Program, tests: &[&str; 3]) {
-        let len = program.statements.len();
-        assert_eq!(
-            len, 3,
-            "Program.statements does not contain 3 statements. got={}",
-            len
-        );
-        for (i, tt) in tests.iter().enumerate() {
-            let statement = &program.statements[i];
-            if !test_let_node(statement, tt.to_string()) {
-                break;
-            }
-        }
     }
 
     fn test_let_node(statement: &Node, name: String) -> bool {

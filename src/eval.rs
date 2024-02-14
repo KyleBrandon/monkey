@@ -80,6 +80,10 @@ pub fn eval(node: &Node, env: &mut Environment) -> Option<Object> {
 
             apply_function(&function, &args)
         }
+        Node::StringLiteral(string) => {
+            let s = string.value.clone();
+            Some(Object::String(s))
+        }
         _ => None,
     }
 }
@@ -106,7 +110,7 @@ fn eval_expressions(exprs: &Vec<Node>, env: &mut Environment) -> Vec<Object> {
     result
 }
 
-fn apply_function(func: &Object, args: &Vec<Object>) -> Option<Object> {
+fn apply_function(func: &Object, args: &[Object]) -> Option<Object> {
     match func {
         Object::Function(function) => {
             //
@@ -121,7 +125,7 @@ fn apply_function(func: &Object, args: &Vec<Object>) -> Option<Object> {
     }
 }
 
-fn extended_function_env(function: &Function, args: &Vec<Object>) -> Environment {
+fn extended_function_env(function: &Function, args: &[Object]) -> Environment {
     let mut env = Environment::new_enclosed(function.env.clone());
     for (i, param) in function.parameters.iter().enumerate() {
         env.set(param.value.clone(), args[i].clone());
@@ -252,6 +256,9 @@ fn eval_infix_expression(
             eval_boolean_infix_expression(operator, left, right)
         }
 
+        (Some(Object::String(left)), Some(Object::String(right))) => {
+            eval_string_infix_expression(operator, left, right)
+        }
         (Some(left), Some(right)) => {
             if left.object_type() != right.object_type() {
                 Some(Object::Error(format!(
@@ -272,6 +279,16 @@ fn eval_infix_expression(
         _ => Some(Object::Error(format!(
             "invalid operand: {:?} {} {:?}",
             left, operator, right
+        ))),
+    }
+}
+
+fn eval_string_infix_expression(operator: &str, left: String, right: String) -> Option<Object> {
+    match operator {
+        "+" => Some(Object::String(left + &right)),
+        _ => Some(Object::Error(format!(
+            "unknown operator: STRING {} STRING",
+            operator
         ))),
     }
 }
@@ -311,6 +328,8 @@ mod tests {
         Int(i64),
         Unit,
     }
+
+    use std::ptr::write;
 
     use crate::{lexer::Lexer, object::Object, parser::Parser};
 
@@ -463,6 +482,7 @@ mod tests {
                 "unknown operator: BOOLEAN + BOOLEAN",
             ),
             ("foobar", "identifier not found: foobar"),
+            ("\"Hello\" - \"World\"", "unknown operator: STRING - STRING"),
         ];
 
         for tt in tests {
@@ -541,6 +561,35 @@ mod tests {
         "#;
 
         test_integer_object(test_eval(input).unwrap(), 5);
+    }
+
+    #[test]
+    fn test_string_literal() {
+        let input = r#""hello world""#;
+        let Some(evaluated) = test_eval(input) else {
+            panic!("test_eval returned None");
+        };
+
+        let Object::String(s) = evaluated else {
+            panic!("object is not String. got={:?}", &evaluated);
+        };
+
+        assert_eq!(s, "hello world".to_string());
+    }
+
+    #[test]
+    fn test_string_concatenation() {
+        let input = r#""hello" + " " + "world""#;
+
+        let Some(evaluated) = test_eval(input) else {
+            panic!("test_eval returned None");
+        };
+
+        let Object::String(s) = evaluated else {
+            panic!("object is not String. got={:?}", &evaluated);
+        };
+
+        assert_eq!(s, "hello world");
     }
 
     fn test_eval(input: &str) -> Option<Object> {

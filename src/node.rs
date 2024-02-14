@@ -40,6 +40,7 @@ pub enum Node {
     IfExpression(IfExpression),
     FunctionLiteral(FunctionLiteral),
     CallExpression(CallExpression),
+    StringLiteral(StringLiteral),
 }
 
 impl Node {
@@ -59,6 +60,7 @@ impl Node {
             Node::FunctionLiteral(statement) => statement.token_literal(),
             Node::CallExpression(expr) => expr.token_literal(),
             Node::BlockStatement(expr) => expr.token_literal(),
+            Node::StringLiteral(statement) => statement.token_literal(),
         }
     }
 
@@ -78,6 +80,7 @@ impl Node {
             Node::FunctionLiteral(statement) => statement.string(),
             Node::CallExpression(expr) => expr.string(),
             Node::BlockStatement(expr) => expr.string(),
+            Node::StringLiteral(statement) => statement.string(),
         }
     }
 }
@@ -357,6 +360,21 @@ impl CallExpression {
                 .collect::<Vec<String>>()
                 .join(", ")
         )
+    }
+}
+
+#[derive(Debug)]
+pub struct StringLiteral {
+    pub token: Token,
+    pub value: String,
+}
+
+impl StringLiteral {
+    pub fn token_literal(&self) -> String {
+        self.token.literal.clone()
+    }
+    pub fn string(&self) -> String {
+        self.token.literal.clone()
     }
 }
 

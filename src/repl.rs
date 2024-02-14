@@ -8,6 +8,10 @@ pub fn start_repl() {
         print!(">> ");
         let mut input = String::new();
         if let Ok(_result) = stdin().read_line(&mut input) {
+            if input.starts_with("::exit") {
+                break;
+            }
+
             let lexer = Lexer::new(input);
             let mut parser = Parser::new(lexer);
             let result = parser.parse_program();

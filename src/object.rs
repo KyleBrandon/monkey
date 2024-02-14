@@ -19,6 +19,7 @@ pub enum ObjectType {
     ReturnValue,
     Error,
     Function,
+    String,
 }
 
 impl Display for ObjectType {
@@ -33,6 +34,7 @@ impl Display for ObjectType {
                 ObjectType::ReturnValue => "RETURN_VALUE",
                 ObjectType::Error => "ERROR",
                 ObjectType::Function => "FUNCTION",
+                ObjectType::String => "STRING",
             }
         )
     }
@@ -46,6 +48,7 @@ pub enum Object {
     ReturnValue(Box<Object>),
     Error(String),
     Function(Function),
+    String(String),
 }
 
 impl Object {
@@ -57,6 +60,7 @@ impl Object {
             Object::ReturnValue(_) => ObjectType::ReturnValue,
             Object::Error(_) => ObjectType::Error,
             Object::Function(_) => ObjectType::Function,
+            Object::String(_) => ObjectType::String,
         }
     }
 
@@ -83,6 +87,7 @@ impl Object {
 
                 buffer
             }
+            Object::String(s) => s.clone(),
         }
     }
 }
