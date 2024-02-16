@@ -1,6 +1,7 @@
 use std::{ops::Deref, rc::Rc};
 
 use crate::{
+    builtins::get_builtin,
     environment::Environment,
     node::{BlockStatement, Identifier, IfExpression, Node, Program},
     object::{Function, Object, ObjectType},
@@ -116,8 +117,9 @@ fn apply_function(func: &Object, args: &[Object]) -> Option<Object> {
             //
             let mut extended_env = extended_function_env(function, args);
             let evaluated = eval(function.body.deref(), &mut extended_env);
-            unwrap_result_valud(evaluated)
+            unwrap_result_value(evaluated)
         }
+        Object::Builtin(function) => function(args),
         _ => Some(Object::Error(format!(
             "not a function: {}",
             func.object_type()
@@ -134,7 +136,7 @@ fn extended_function_env(function: &Function, args: &[Object]) -> Environment {
     env
 }
 
-fn unwrap_result_valud(evaluated: Option<Object>) -> Option<Object> {
+fn unwrap_result_value(evaluated: Option<Object>) -> Option<Object> {
     if let Some(Object::ReturnValue(val)) = evaluated {
         Some(*val)
     } else {
@@ -143,12 +145,15 @@ fn unwrap_result_valud(evaluated: Option<Object>) -> Option<Object> {
 }
 
 fn eval_identifier(ident: &Identifier, env: &mut Environment) -> Option<Object> {
-    match env.get(&ident.value) {
-        Some(val) => Some(val),
-        None => Some(Object::Error(format!(
+    if let Some(val) = env.get(&ident.value) {
+        Some(val)
+    } else if let Some(builtin) = get_builtin(ident.value.as_str()) {
+        Some(builtin)
+    } else {
+        Some(Object::Error(format!(
             "identifier not found: {}",
             ident.value
-        ))),
+        )))
     }
 }
 
@@ -590,6 +595,41 @@ mod tests {
         };
 
         assert_eq!(s, "hello world");
+    }
+
+    #[test]
+    fn test_builtin_function() {
+        let tests: Vec<(String, Result<i64, String>)> = vec![
+            (r#"len("")"#.to_string(), Ok(0)),
+            (r#"len("four")"#.to_string(), Ok(4)),
+            (r#"len("hello world")"#.to_string(), Ok(11)),
+            (
+                r#"len(1)"#.to_string(),
+                Err("argument to `len` not supported, got INTEGER".to_string()),
+            ),
+            (
+                r#"len("one", "two")"#.to_string(),
+                Err("wrong number of arguments. got=2, want=1".to_string()),
+            ),
+        ];
+
+        for tt in tests {
+            let evaluated = test_eval(tt.0.as_str());
+            match tt.1 {
+                Ok(i) => {
+                    let Some(Object::Integer(val)) = evaluated else {
+                        panic!("object is not Integer. got={:?}", &evaluated);
+                    };
+                    assert_eq!(val, i);
+                }
+                Err(s) => {
+                    let Some(Object::Error(e)) = evaluated else {
+                        panic!("object is not Error. got={:?}", &evaluated);
+                    };
+                    assert_eq!(e, s);
+                }
+            }
+        }
     }
 
     fn test_eval(input: &str) -> Option<Object> {

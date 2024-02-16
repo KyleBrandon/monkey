@@ -11,6 +11,8 @@ use crate::{
     node::{Identifier, Node},
 };
 
+type BulitinFunction = fn(&[Object]) -> Option<Object>;
+
 #[derive(Debug, PartialEq)]
 pub enum ObjectType {
     Integer,
@@ -20,6 +22,7 @@ pub enum ObjectType {
     Error,
     Function,
     String,
+    Builtin,
 }
 
 impl Display for ObjectType {
@@ -35,6 +38,7 @@ impl Display for ObjectType {
                 ObjectType::Error => "ERROR",
                 ObjectType::Function => "FUNCTION",
                 ObjectType::String => "STRING",
+                ObjectType::Builtin => "BULITIN",
             }
         )
     }
@@ -49,6 +53,7 @@ pub enum Object {
     Error(String),
     Function(Function),
     String(String),
+    Builtin(BulitinFunction),
 }
 
 impl Object {
@@ -61,6 +66,7 @@ impl Object {
             Object::Error(_) => ObjectType::Error,
             Object::Function(_) => ObjectType::Function,
             Object::String(_) => ObjectType::String,
+            Object::Builtin(_) => ObjectType::Builtin,
         }
     }
 
@@ -88,6 +94,7 @@ impl Object {
                 buffer
             }
             Object::String(s) => s.clone(),
+            Object::Builtin(_) => "builtin function".to_string(),
         }
     }
 }
