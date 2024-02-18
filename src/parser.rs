@@ -3,9 +3,10 @@ use std::{collections::HashMap, rc::Rc};
 use crate::{
     lexer::Lexer,
     node::{
-        BlockStatement, BooleanLiteral, CallExpression, ExpressionStatement, FunctionLiteral,
-        Identifier, IfExpression, InfixExpression, IntegerLiteral, LetStatement, Node, Precedence,
-        PrefixExpression, Program, ReturnStatement, StringLiteral,
+        ArrayLiteral, BlockStatement, BooleanLiteral, CallExpression, ExpressionStatement,
+        FunctionLiteral, Identifier, IfExpression, IndexExpression, InfixExpression,
+        IntegerLiteral, LetStatement, Node, Precedence, PrefixExpression, Program, ReturnStatement,
+        StringLiteral,
     },
     token::{Token, TokenType},
 };
@@ -194,6 +195,7 @@ impl Parser {
             TokenType::If => self.parse_if_expression(token),
             TokenType::Function => self.parse_function_literal(token),
             TokenType::String => self.parse_string_literal(token),
+            TokenType::LBracket => self.parse_array_literal(token),
             _ => {
                 let message = format!("no prefix parse function for {:?} found", token.token_type);
 
@@ -224,6 +226,7 @@ impl Parser {
                 TokenType::LT => self.parse_infix_expression(expr),
                 TokenType::GT => self.parse_infix_expression(expr),
                 TokenType::LParen => self.parse_call_expression(expr),
+                TokenType::LBracket => self.parse_index_expression(expr),
                 _ => Some(expr),
             };
 
@@ -275,6 +278,43 @@ impl Parser {
             token: token.clone(),
             value: token.literal.clone(),
         }))
+    }
+
+    fn parse_array_literal(&mut self, token: Token) -> Option<Node> {
+        Some(Node::ArrayLiteral(ArrayLiteral {
+            token: token.clone(),
+            elements: self.parse_expression_list(TokenType::RBracket),
+        }))
+    }
+
+    fn parse_expression_list(&mut self, end_token: TokenType) -> Vec<Node> {
+        let mut list = Vec::new();
+        if self.peek_token_is(end_token) {
+            self.next_token();
+            return list;
+        }
+
+        self.next_token();
+        let Some(expr) = self.parse_expression(Precedence::Lowest) else {
+            panic!("Failed to parse expression");
+        };
+
+        list.push(expr);
+
+        while self.peek_token_is(TokenType::Comma) {
+            self.next_token();
+            self.next_token();
+            let Some(expr) = self.parse_expression(Precedence::Lowest) else {
+                panic!("Failed to parse expression");
+            };
+            list.push(expr);
+        }
+
+        if !self.expect_peak(end_token) {
+            panic!("Failed to parse expression");
+        }
+
+        list
     }
 
     fn parse_prefix_expression(&mut self, token: Token) -> Option<Node> {
@@ -441,41 +481,26 @@ impl Parser {
         Some(Node::CallExpression(CallExpression {
             token,
             function: Box::new(function),
-            arguments: self.parse_call_arguments(),
+            arguments: self.parse_expression_list(TokenType::RParen),
         }))
     }
 
-    fn parse_call_arguments(&mut self) -> Vec<Node> {
-        let mut args = Vec::new();
-
-        if self.peek_token_is(TokenType::RParen) {
-            self.next_token();
-            return args;
-        }
-
-        self.next_token();
-
-        let Some(expression) = self.parse_expression(Precedence::Lowest) else {
-            panic!("Failed to parse call expression");
+    fn parse_index_expression(&mut self, expr: Node) -> Option<Node> {
+        let Some(token) = self.curr_token.clone() else {
+            return None;
         };
-
-        args.push(expression);
-
-        while self.peek_token_is(TokenType::Comma) {
-            self.next_token();
-            self.next_token();
-            let Some(expression) = self.parse_expression(Precedence::Lowest) else {
-                panic!("Failed to parse call expression");
-            };
-
-            args.push(expression);
+        self.next_token();
+        let Some(index) = self.parse_expression(Precedence::Lowest) else {
+            return None;
+        };
+        if !self.expect_peak(TokenType::RBracket) {
+            return None;
         }
-
-        if !self.expect_peak(TokenType::RParen) {
-            panic!("Expected a right paren after call arguments");
-        }
-
-        args
+        Some(Node::IndexExpression(IndexExpression {
+            token,
+            left: Box::new(expr),
+            index: Box::new(index),
+        }))
     }
 
     fn current_token_is(&self, token_type: TokenType) -> bool {
@@ -538,6 +563,7 @@ fn init_precedence_lookup() -> HashMap<TokenType, Precedence> {
     map.insert(TokenType::Slash, Precedence::Product);
     map.insert(TokenType::Asterisk, Precedence::Product);
     map.insert(TokenType::LParen, Precedence::Call);
+    map.insert(TokenType::LBracket, Precedence::Index);
 
     map
 }
@@ -884,6 +910,14 @@ mod tests {
             (
                 "add(a + b + c * d / f + g)",
                 "add((((a + b) + ((c * d) / f)) + g))",
+            ),
+            (
+                "a * [1, 2, 3, 4][b * c] * d",
+                "((a * ([1, 2, 3, 4][(b * c)])) * d)",
+            ),
+            (
+                "add(a * b[2], b[1], 2 * [1, 2][1])",
+                "add((a * (b[2])), (b[1]), (2 * ([1, 2][1])))",
             ),
         ];
         for tt in tests {
@@ -1248,6 +1282,83 @@ mod tests {
                 }
             }
             Err(e) => panic!("Failed to parse program: {:?}", e),
+        }
+    }
+
+    #[test]
+    fn test_parsing_array_literals() {
+        let input = "[1, 2 * 2, 3 + 3]";
+        let lexer = Lexer::new(input.to_string());
+        let mut parser = Parser::new(lexer);
+        let result = parser.parse_program();
+        match result {
+            Ok(program) => {
+                let Node::Program(program) = program else {
+                    panic!("program is not Program. got={:?}", program);
+                };
+                if program.statements.len() != 1 {
+                    panic!(
+                        "program.statements does not contain 1 statments. got={}",
+                        program.statements.len()
+                    );
+                }
+                let Node::ExpressionStatement(expr_statement) = &program.statements[0] else {
+                    panic!(
+                        "statement ir not ExpressionStatement. got={:?}",
+                        program.statements[0]
+                    );
+                };
+                let Node::ArrayLiteral(array_literal) = &expr_statement.expression.deref() else {
+                    panic!(
+                        "expression is not a ArrayLiteral. got={:?}",
+                        expr_statement.expression.deref()
+                    );
+                };
+                if array_literal.elements.len() != 3 {
+                    panic!(
+                        "array_literal.elements has not 3 elements. got={}",
+                        array_literal.elements.len()
+                    );
+                }
+                test_integer_literal(&array_literal.elements[0], "1");
+                test_infix_expression(&array_literal.elements[1], "2", "*", "2");
+                test_infix_expression(&array_literal.elements[2], "3", "+", "3");
+            }
+            Err(e) => {
+                panic!("Error parsing program: {:?}", e);
+            }
+        }
+    }
+
+    #[test]
+    fn test_parsing_index_expression() {
+        let input = "myArray[1 + 1]";
+        let lexer = Lexer::new(input.to_string());
+        let mut parser = Parser::new(lexer);
+        let result = parser.parse_program();
+        match result {
+            Ok(program) => {
+                let Node::Program(program) = program else {
+                    panic!("program is not Program. got={:?}", program);
+                };
+                let Node::ExpressionStatement(expr_statement) = &program.statements[0] else {
+                    panic!(
+                        "statement ir not ExpressionStatement. got={:?}",
+                        program.statements[0]
+                    );
+                };
+                let Node::IndexExpression(index_expr) = &expr_statement.expression.deref() else {
+                    panic!(
+                        "expression is not a IndexExpression. got={:?}",
+                        expr_statement.expression.deref()
+                    );
+                };
+                test_identifier(index_expr.left.deref(), "myArray");
+                test_infix_expression(index_expr.index.deref(), "1", "+", "1");
+            }
+            Err(e) => {
+                panic!("Error parsing program: {:?}", e);
+            }
         }
     }
 

@@ -4,7 +4,7 @@ use crate::{
     builtins::get_builtin,
     environment::Environment,
     node::{BlockStatement, Identifier, IfExpression, Node, Program},
-    object::{Function, Object, ObjectType},
+    object::{Array, Function, Object, ObjectType},
 };
 
 pub fn eval(node: &Node, env: &mut Environment) -> Option<Object> {
@@ -84,6 +84,27 @@ pub fn eval(node: &Node, env: &mut Environment) -> Option<Object> {
         Node::StringLiteral(string) => {
             let s = string.value.clone();
             Some(Object::String(s))
+        }
+        Node::ArrayLiteral(array) => {
+            let elements = eval_expressions(&array.elements, env);
+            if elements.len() == 1 && is_error(&elements[0]) {
+                Some(elements[0].clone())
+            } else {
+                Some(Object::Array(Array { elements }))
+            }
+        }
+        Node::IndexExpression(expr) => {
+            let left = eval(expr.left.deref(), env);
+            if let Some(Object::Error(_)) = left {
+                return left;
+            };
+
+            let index = eval(expr.index.deref(), env);
+            if let Some(Object::Error(_)) = index {
+                return index;
+            }
+
+            eval_index_expression(left, index)
         }
         _ => None,
     }
@@ -326,15 +347,33 @@ fn eval_boolean_infix_expression(operator: &str, left: bool, right: bool) -> Opt
     }
 }
 
+fn eval_index_expression(left: Option<Object>, index: Option<Object>) -> Option<Object> {
+    match (left.clone(), index.clone()) {
+        (Some(Object::Array(array)), Some(Object::Integer(i))) => {
+            eval_array_index_expression(array, i)
+        }
+        _ => Some(Object::Error(format!(
+            "index operator not supported: {:?}",
+            left
+        ))),
+    }
+}
+
+fn eval_array_index_expression(array: Array, index: i64) -> Option<Object> {
+    if index < 0 || index >= array.elements.len() as i64 {
+        return Some(Object::Null);
+    }
+    Some(array.elements[index as usize].clone())
+}
+
 #[cfg(test)]
 mod tests {
 
     enum IntOrUnit {
         Int(i64),
+        Array(Vec<i64>),
         Unit,
     }
-
-    use std::ptr::write;
 
     use crate::{lexer::Lexer, object::Object, parser::Parser};
 
@@ -364,7 +403,7 @@ mod tests {
             let Some(evaluated) = test_eval(tt.0) else {
                 panic!("test_eval returned None");
             };
-            test_integer_object(evaluated, tt.1);
+            test_integer_object(&evaluated, tt.1);
         }
     }
 
@@ -398,7 +437,7 @@ mod tests {
                 panic!("test_eval returned None");
             };
 
-            test_boolean_object(evaluated, tt.1);
+            test_boolean_object(&evaluated, tt.1);
         }
     }
 
@@ -418,7 +457,7 @@ mod tests {
                 panic!("test_eval returned None");
             };
 
-            test_boolean_object(evaluated, tt.1);
+            test_boolean_object(&evaluated, tt.1);
         }
     }
 
@@ -438,12 +477,14 @@ mod tests {
         for tt in tests {
             match test_eval(tt.0) {
                 Some(evaluated) => match tt.1 {
-                    IntOrUnit::Int(i64) => test_integer_object(evaluated, i64),
+                    IntOrUnit::Int(i64) => test_integer_object(&evaluated, i64),
                     IntOrUnit::Unit => test_null_object(&evaluated),
+                    _ => panic!("test_eval returned None"),
                 },
                 None => match tt.1 {
                     IntOrUnit::Int(_) => panic!("test_eval returned None"),
                     IntOrUnit::Unit => (),
+                    _ => panic!("test_eval returned None"),
                 },
             }
         }
@@ -466,7 +507,7 @@ mod tests {
                 panic!("test_eval returned None");
             };
 
-            test_integer_object(evaluated, tt.1);
+            test_integer_object(&evaluated, tt.1);
         }
     }
 
@@ -516,7 +557,7 @@ mod tests {
                 panic!("test_eval returned None");
             };
 
-            test_integer_object(evaluated, tt.1);
+            test_integer_object(&evaluated, tt.1);
         }
     }
 
@@ -551,7 +592,7 @@ mod tests {
             let Some(evaluated) = test_eval(tt.0) else {
                 panic!("test_eval returned None");
             };
-            test_integer_object(evaluated, tt.1);
+            test_integer_object(&evaluated, tt.1);
         }
     }
 
@@ -565,7 +606,7 @@ mod tests {
         addTwo(3);
         "#;
 
-        test_integer_object(test_eval(input).unwrap(), 5);
+        test_integer_object(&test_eval(input).unwrap(), 5);
     }
 
     #[test]
@@ -599,35 +640,122 @@ mod tests {
 
     #[test]
     fn test_builtin_function() {
-        let tests: Vec<(String, Result<i64, String>)> = vec![
-            (r#"len("")"#.to_string(), Ok(0)),
-            (r#"len("four")"#.to_string(), Ok(4)),
-            (r#"len("hello world")"#.to_string(), Ok(11)),
+        let tests = vec![
+            (r#"len("")"#, Ok(IntOrUnit::Int(0))),
+            (r#"len("four")"#, Ok(IntOrUnit::Int(4))),
+            (r#"len("hello world")"#, Ok(IntOrUnit::Int(11))),
             (
-                r#"len(1)"#.to_string(),
-                Err("argument to `len` not supported, got INTEGER".to_string()),
+                r#"len(1)"#,
+                Err("argument to `len` not supported, got INTEGER"),
             ),
             (
-                r#"len("one", "two")"#.to_string(),
-                Err("wrong number of arguments. got=2, want=1".to_string()),
+                r#"len("one", "two")"#,
+                Err("wrong number of arguments. got=2, want=1"),
+            ),
+            (r#"len([1, 2, 3])"#, Ok(IntOrUnit::Int(3))),
+            (r#"len([])"#, Ok(IntOrUnit::Int(0))),
+            (r#"puts("hello", "world!")"#, Ok(IntOrUnit::Unit)),
+            (r#"first([1, 2, 3])"#, Ok(IntOrUnit::Int(1))),
+            (r#"first([])"#, Ok(IntOrUnit::Unit)),
+            (
+                r#"first(1)"#,
+                Err("argument to `first` must be ARRAY, got INTEGER"),
+            ),
+            (r#"last([1, 2, 3])"#, Ok(IntOrUnit::Int(3))),
+            (r#"last([])"#, Ok(IntOrUnit::Unit)),
+            (
+                r#"last(1)"#,
+                Err("argument to `last` must be ARRAY, got INTEGER"),
+            ),
+            (r#"rest([1, 2, 3])"#, Ok(IntOrUnit::Array(vec![2, 3]))),
+            (r#"rest([])"#, Ok(IntOrUnit::Unit)),
+            (r#"push([], 1)"#, Ok(IntOrUnit::Array(vec![1]))),
+            (
+                r#"push(1, 1)"#,
+                Err("argument to `push` must be ARRAY, got INTEGER"),
             ),
         ];
 
         for tt in tests {
-            let evaluated = test_eval(tt.0.as_str());
+            let evaluated = test_eval(tt.0);
             match tt.1 {
-                Ok(i) => {
-                    let Some(Object::Integer(val)) = evaluated else {
-                        panic!("object is not Integer. got={:?}", &evaluated);
-                    };
-                    assert_eq!(val, i);
-                }
+                Ok(i) => match i {
+                    IntOrUnit::Int(i) => {
+                        let Some(Object::Integer(val)) = evaluated else {
+                            panic!("object is not Integer. got={:?}", &evaluated);
+                        };
+                        assert_eq!(val, i);
+                    }
+                    IntOrUnit::Array(arr) => {
+                        let Some(Object::Array(array)) = evaluated else {
+                            panic!("object is not Array. got={:?}", &evaluated);
+                        };
+                        for (i, el) in arr.iter().enumerate() {
+                            test_integer_object(&array.elements[i], *el);
+                        }
+                    }
+                    IntOrUnit::Unit => (),
+                },
                 Err(s) => {
                     let Some(Object::Error(e)) = evaluated else {
                         panic!("object is not Error. got={:?}", &evaluated);
                     };
                     assert_eq!(e, s);
                 }
+            }
+        }
+    }
+
+    #[test]
+    fn test_array_literal() {
+        let input = "[1, 2 * 2, 3 + 3]";
+        let Some(evaluated) = test_eval(input) else {
+            panic!("test_eval returned None");
+        };
+
+        let Object::Array(array) = evaluated else {
+            panic!("object is not Array. got={:?}", &evaluated);
+        };
+
+        assert_eq!(array.elements.len(), 3);
+
+        test_integer_object(&array.elements[0].clone(), 1);
+        test_integer_object(&array.elements[1].clone(), 4);
+        test_integer_object(&array.elements[2].clone(), 6);
+    }
+
+    #[test]
+    fn test_array_index_expressions() {
+        let tests = [
+            ("[1, 2, 3][0]", IntOrUnit::Int(1)),
+            ("[1, 2, 3][1]", IntOrUnit::Int(2)),
+            ("[1, 2, 3][2]", IntOrUnit::Int(3)),
+            ("let i = 0; [1][i];", IntOrUnit::Int(1)),
+            ("[1, 2, 3][1 + 1];", IntOrUnit::Int(3)),
+            ("let myArray = [1, 2, 3]; myArray[2];", IntOrUnit::Int(3)),
+            (
+                "let myArray = [1, 2, 3]; myArray[0] + myArray[1] + myArray[2];",
+                IntOrUnit::Int(6),
+            ),
+            (
+                "let myArray = [1, 2, 3]; let i = myArray[0]; myArray[i]",
+                IntOrUnit::Int(2),
+            ),
+            ("[1, 2, 3][3]", IntOrUnit::Unit),
+            ("[1, 2, 3][-1]", IntOrUnit::Unit),
+        ];
+
+        for tt in tests {
+            match test_eval(tt.0) {
+                Some(evaluated) => match tt.1 {
+                    IntOrUnit::Int(val) => test_integer_object(&evaluated, val),
+                    IntOrUnit::Unit => test_null_object(&evaluated),
+                    _ => panic!("test_eval returned None"),
+                },
+                None => match tt.1 {
+                    IntOrUnit::Unit => (),
+                    _ => panic!("test_eval returned None"),
+                },
             }
         }
     }
@@ -643,19 +771,19 @@ mod tests {
         }
     }
 
-    fn test_integer_object(obj: Object, expected: i64) {
+    fn test_integer_object(obj: &Object, expected: i64) {
         match obj {
             Object::Integer(i) => {
-                assert_eq!(i, expected);
+                assert_eq!(*i, expected);
             }
             _ => panic!("object is not Integer. got={:?}", obj),
         }
     }
 
-    fn test_boolean_object(obj: Object, expected: bool) {
+    fn test_boolean_object(obj: &Object, expected: bool) {
         match obj {
             Object::Boolean(b) => {
-                assert_eq!(b, expected);
+                assert_eq!(*b, expected);
             }
             _ => panic!("object is not Boolean. got={:?}", obj),
         }

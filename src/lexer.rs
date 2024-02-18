@@ -105,6 +105,14 @@ impl Lexer {
                     let literal = self.read_string();
                     Token::new(TokenType::String, literal)
                 }
+                '[' => {
+                    self.read_char();
+                    Token::new(TokenType::LBracket, tok.to_string())
+                }
+                ']' => {
+                    self.read_char();
+                    Token::new(TokenType::RBracket, tok.to_string())
+                }
 
                 c if self.is_identifier(c) => {
                     //
@@ -249,6 +257,8 @@ if (5 < 10) {
 
 "foo bar"
 
+[1, 2];
+
 "#;
 
         let tests = vec![
@@ -326,6 +336,12 @@ if (5 < 10) {
             (TokenType::Semicolon, ";"),
             (TokenType::String, "foobar"),
             (TokenType::String, "foo bar"),
+            (TokenType::LBracket, "["),
+            (TokenType::Int, "1"),
+            (TokenType::Comma, ","),
+            (TokenType::Int, "2"),
+            (TokenType::RBracket, "]"),
+            (TokenType::Semicolon, ";"),
             (TokenType::EOF, ""),
         ];
 

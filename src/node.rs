@@ -11,6 +11,7 @@ pub enum Precedence {
     Product = 4,     // *
     Prefix = 5,      // -X or !X
     Call = 6,        // myFunction(X)
+    Index = 7,       // array[index]
 }
 
 /// NodeType
@@ -41,6 +42,8 @@ pub enum Node {
     FunctionLiteral(FunctionLiteral),
     CallExpression(CallExpression),
     StringLiteral(StringLiteral),
+    ArrayLiteral(ArrayLiteral),
+    IndexExpression(IndexExpression),
 }
 
 impl Node {
@@ -61,6 +64,8 @@ impl Node {
             Node::CallExpression(expr) => expr.token_literal(),
             Node::BlockStatement(expr) => expr.token_literal(),
             Node::StringLiteral(statement) => statement.token_literal(),
+            Node::ArrayLiteral(statement) => statement.token_literal(),
+            Node::IndexExpression(statement) => statement.token_literal(),
         }
     }
 
@@ -81,6 +86,8 @@ impl Node {
             Node::CallExpression(expr) => expr.string(),
             Node::BlockStatement(expr) => expr.string(),
             Node::StringLiteral(statement) => statement.string(),
+            Node::ArrayLiteral(statement) => statement.string(),
+            Node::IndexExpression(statement) => statement.string(),
         }
     }
 }
@@ -375,6 +382,44 @@ impl StringLiteral {
     }
     pub fn string(&self) -> String {
         self.token.literal.clone()
+    }
+}
+
+#[derive(Debug)]
+pub struct ArrayLiteral {
+    pub token: Token,
+    pub elements: Vec<Node>,
+}
+
+impl ArrayLiteral {
+    pub fn token_literal(&self) -> String {
+        self.token.literal.clone()
+    }
+    pub fn string(&self) -> String {
+        format!(
+            "[{}]",
+            self.elements
+                .iter()
+                .map(|p| p.string())
+                .collect::<Vec<String>>()
+                .join(", ")
+        )
+    }
+}
+
+#[derive(Debug)]
+pub struct IndexExpression {
+    pub token: Token,
+    pub left: Box<Node>,
+    pub index: Box<Node>,
+}
+
+impl IndexExpression {
+    pub fn token_literal(&self) -> String {
+        self.token.literal.clone()
+    }
+    pub fn string(&self) -> String {
+        format!("({}[{}])", self.left.string(), self.index.string())
     }
 }
 

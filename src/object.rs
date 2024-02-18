@@ -23,6 +23,7 @@ pub enum ObjectType {
     Function,
     String,
     Builtin,
+    Array,
 }
 
 impl Display for ObjectType {
@@ -39,6 +40,7 @@ impl Display for ObjectType {
                 ObjectType::Function => "FUNCTION",
                 ObjectType::String => "STRING",
                 ObjectType::Builtin => "BULITIN",
+                ObjectType::Array => "ARRAY",
             }
         )
     }
@@ -54,6 +56,7 @@ pub enum Object {
     Function(Function),
     String(String),
     Builtin(BulitinFunction),
+    Array(Array),
 }
 
 impl Object {
@@ -67,6 +70,7 @@ impl Object {
             Object::Function(_) => ObjectType::Function,
             Object::String(_) => ObjectType::String,
             Object::Builtin(_) => ObjectType::Builtin,
+            Object::Array(_) => ObjectType::Array,
         }
     }
 
@@ -95,6 +99,13 @@ impl Object {
             }
             Object::String(s) => s.clone(),
             Object::Builtin(_) => "builtin function".to_string(),
+            Object::Array(a) => {
+                let mut buffer = String::new();
+                buffer.push('[');
+                buffer.push_str(&a.elements.iter().map(|e| e.inspect()).join(", "));
+                buffer.push(']');
+                buffer
+            }
         }
     }
 }
@@ -114,4 +125,9 @@ impl Clone for Function {
             env: self.env.clone(),
         }
     }
+}
+
+#[derive(Debug, Clone)]
+pub struct Array {
+    pub elements: Vec<Object>,
 }
