@@ -1,5 +1,6 @@
 pub mod builtins;
 pub mod environment;
+pub mod error;
 pub mod eval;
 pub mod lexer;
 pub mod node;

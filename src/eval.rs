@@ -3,136 +3,115 @@ use std::{ops::Deref, rc::Rc};
 use crate::{
     builtins::get_builtin,
     environment::Environment,
+    error::EvalError,
     node::{BlockStatement, Identifier, IfExpression, Node, Program},
-    object::{Array, Function, Object, ObjectType},
+    object::{Array, Function, Object},
 };
 
-pub fn eval(node: &Node, env: &mut Environment) -> Option<Object> {
+pub fn eval(node: &Node, env: &mut Environment) -> Result<Object, EvalError> {
+    tracing::info!("evaluating: {:?}", node);
     match node {
         Node::Program(program) => eval_program(program, env),
         Node::ExpressionStatement(expression) => eval(expression.expression.deref(), env),
-        Node::IntegerLiteral(integer) => Some(Object::Integer(integer.value)),
-        Node::BooleanLiteral(boolean) => Some(Object::Boolean(boolean.value)),
-        Node::PrefixExpression(expr) => {
-            //
-            let Some(right) = eval(expr.right.deref(), env) else {
-                return None;
-            };
-
-            if is_error(&right) {
-                return Some(right);
-            }
-
-            eval_prefix_expression(&expr.operator, right)
-        }
+        Node::IntegerLiteral(integer) => Ok(Object::Integer(integer.value)),
+        Node::BooleanLiteral(boolean) => Ok(Object::Boolean(boolean.value)),
+        Node::PrefixExpression(expr) => match eval(expr.right.deref(), env) {
+            Ok(right) => eval_prefix_expression(&expr.operator, right),
+            Err(err) => Err(err),
+        },
         Node::InfixExpression(expr) => {
-            let left = eval(expr.left.deref(), env);
-            if let Some(Object::Error(_)) = left {
-                return left;
+            let result = eval(expr.left.deref(), env);
+            let Ok(left) = result else {
+                return result;
             };
 
-            let right = eval(expr.right.deref(), env);
-            if let Some(Object::Error(_)) = right {
-                return right;
+            let result = eval(expr.right.deref(), env);
+            let Ok(right) = result else {
+                return result;
             };
 
-            eval_infix_expression(&expr.operator, left, right)
+            eval_infix_expression(&expr.operator, &left, &right)
         }
         Node::IfExpression(expr) => eval_if_expression(expr, env),
         Node::ReturnStatement(expr) => {
-            let Some(val) = eval(&expr.return_value, env) else {
-                return None;
-            };
-
-            if is_error(&val) {
-                return Some(val);
+            let result = eval(&expr.return_value, env);
+            match result {
+                Ok(val) => Ok(Object::ReturnValue(Box::new(val))),
+                Err(e) => Err(e),
             }
-
-            Some(Object::ReturnValue(Box::new(val)))
         }
         Node::BlockStatement(expr) => eval_block_statements(expr, env),
-        Node::LetStatement(expr) => eval(&expr.value, env).map(|val| {
-            if is_error(&val) {
-                return val;
-            }
+        Node::LetStatement(expr) => {
+            let result = eval(&expr.value, env);
+            let Ok(ref val) = result else {
+                return result;
+            };
             env.set(expr.name.value.clone(), val.clone());
-            val
-        }),
+            result
+        }
         Node::Identifier(ident) => eval_identifier(ident, env),
-        Node::FunctionLiteral(func) => Some(Object::Function(Function {
+        Node::FunctionLiteral(func) => Ok(Object::Function(Function {
             parameters: Rc::clone(&func.parameters),
             body: Rc::clone(&func.body),
             env: env.clone(),
         })),
         Node::CallExpression(expr) => {
             let func = expr.function.deref();
-            let Some(function) = eval(func, env) else {
-                return None;
+            let result = eval(func, env);
+            let Ok(function) = result else {
+                return result;
             };
 
-            if is_error(&function) {
-                return Some(function);
+            let result = eval_expressions(&expr.arguments, env);
+            match result {
+                Ok(args) => apply_function(&function, &args),
+                Err(e) => Err(e),
             }
-
-            let args = eval_expressions(&expr.arguments, env);
-            if args.len() == 1 && is_error(&args[0]) {
-                return Some(args[0].clone());
-            }
-
-            apply_function(&function, &args)
         }
         Node::StringLiteral(string) => {
             let s = string.value.clone();
-            Some(Object::String(s))
+            Ok(Object::String(s))
         }
         Node::ArrayLiteral(array) => {
-            let elements = eval_expressions(&array.elements, env);
-            if elements.len() == 1 && is_error(&elements[0]) {
-                Some(elements[0].clone())
-            } else {
-                Some(Object::Array(Array { elements }))
+            let result = eval_expressions(&array.elements, env);
+            match result {
+                Ok(elements) => Ok(Object::Array(Array { elements })),
+                Err(e) => Err(e),
             }
         }
         Node::IndexExpression(expr) => {
-            let left = eval(expr.left.deref(), env);
-            if let Some(Object::Error(_)) = left {
-                return left;
+            let result = eval(expr.left.deref(), env);
+            let Ok(left) = result else {
+                return result;
             };
 
-            let index = eval(expr.index.deref(), env);
-            if let Some(Object::Error(_)) = index {
-                return index;
-            }
+            let result = eval(expr.index.deref(), env);
+            let Ok(index) = result else {
+                return result;
+            };
 
-            eval_index_expression(left, index)
+            eval_index_expression(&left, &index)
         }
-        _ => None,
+        _ => Err(EvalError {
+            message: format!("unhandled node: {:?}", node),
+        }),
     }
 }
 
-fn is_error(obj: &Object) -> bool {
-    obj.object_type() == ObjectType::Error
-}
-
-fn eval_expressions(exprs: &Vec<Node>, env: &mut Environment) -> Vec<Object> {
-    let mut result = vec![];
+fn eval_expressions(exprs: &Vec<Node>, env: &mut Environment) -> Result<Vec<Object>, EvalError> {
+    let mut expr_result = vec![];
 
     for expr in exprs {
-        let Some(evaluated) = eval(expr, env) else {
-            return vec![];
-        };
-
-        if is_error(&evaluated) {
-            return vec![evaluated];
+        match eval(expr, env) {
+            Ok(evaluated) => expr_result.push(evaluated),
+            Err(e) => return Err(e),
         }
-
-        result.push(evaluated);
     }
 
-    result
+    Ok(expr_result)
 }
 
-fn apply_function(func: &Object, args: &[Object]) -> Option<Object> {
+fn apply_function(func: &Object, args: &[Object]) -> Result<Object, EvalError> {
     match func {
         Object::Function(function) => {
             //
@@ -141,10 +120,9 @@ fn apply_function(func: &Object, args: &[Object]) -> Option<Object> {
             unwrap_result_value(evaluated)
         }
         Object::Builtin(function) => function(args),
-        _ => Some(Object::Error(format!(
-            "not a function: {}",
-            func.object_type()
-        ))),
+        _ => Err(EvalError {
+            message: format!("not a function: {}", func.object_type()),
+        }),
     }
 }
 
@@ -157,39 +135,36 @@ fn extended_function_env(function: &Function, args: &[Object]) -> Environment {
     env
 }
 
-fn unwrap_result_value(evaluated: Option<Object>) -> Option<Object> {
-    if let Some(Object::ReturnValue(val)) = evaluated {
-        Some(*val)
+fn unwrap_result_value(evaluated: Result<Object, EvalError>) -> Result<Object, EvalError> {
+    if let Ok(Object::ReturnValue(val)) = evaluated {
+        Ok(*val)
     } else {
         evaluated
     }
 }
 
-fn eval_identifier(ident: &Identifier, env: &mut Environment) -> Option<Object> {
+fn eval_identifier(ident: &Identifier, env: &mut Environment) -> Result<Object, EvalError> {
     if let Some(val) = env.get(&ident.value) {
-        Some(val)
-    } else if let Some(builtin) = get_builtin(ident.value.as_str()) {
-        Some(builtin)
+        Ok(val)
+    } else if let Ok(builtin) = get_builtin(ident.value.as_str()) {
+        Ok(builtin)
     } else {
-        Some(Object::Error(format!(
-            "identifier not found: {}",
-            ident.value
-        )))
+        Err(EvalError {
+            message: format!("identifier not found: {}", ident.value),
+        })
     }
 }
 
-fn eval_program(program: &Program, env: &mut Environment) -> Option<Object> {
-    let mut result = None;
+fn eval_program(program: &Program, env: &mut Environment) -> Result<Object, EvalError> {
+    let mut result: Result<Object, EvalError> = Ok(Object::Null);
 
     for statement in program.statements.iter() {
         result = eval(statement, env);
-
         match result {
-            Some(Object::ReturnValue(result)) => {
-                let val = result.deref();
-                return Some(val.clone());
+            Ok(Object::ReturnValue(val)) => {
+                return Ok(*val);
             }
-            Some(Object::Error(_)) => return result,
+            Err(_) => return result,
             _ => (),
         }
     }
@@ -197,21 +172,20 @@ fn eval_program(program: &Program, env: &mut Environment) -> Option<Object> {
     result
 }
 
-fn eval_if_expression(expr: &IfExpression, env: &mut Environment) -> Option<Object> {
-    let Some(condition) = eval(&expr.condition, env) else {
-        return None;
+fn eval_if_expression(expr: &IfExpression, env: &mut Environment) -> Result<Object, EvalError> {
+    let result = eval(&expr.condition, env);
+    let Ok(condition) = result else {
+        return result;
     };
-
-    if is_error(&condition) {
-        return Some(condition);
-    }
 
     if is_truthy(condition) {
         eval(&expr.consequence, env)
     } else if let Some(alternative) = &expr.alternative {
         eval(alternative, env)
     } else {
-        None
+        Err(EvalError {
+            message: "Invalid if expression".to_string(),
+        })
     }
 }
 
@@ -223,147 +197,155 @@ fn is_truthy(obj: Object) -> bool {
     }
 }
 
-fn eval_block_statements(block: &BlockStatement, env: &mut Environment) -> Option<Object> {
-    let mut result = None;
+fn eval_block_statements(
+    block: &BlockStatement,
+    env: &mut Environment,
+) -> Result<Object, EvalError> {
+    let mut result: Result<Object, EvalError> = Err(EvalError {
+        message: "Invalid block statement".to_string(),
+    });
+
     for statement in block.statements.iter() {
         //
         result = eval(statement, env);
-        if let Some(obj) = &result {
-            if obj.object_type() == ObjectType::ReturnValue
-                || obj.object_type() == ObjectType::Error
-            {
-                return Some(obj.clone());
+        match result {
+            Ok(Object::ReturnValue(_)) | Err(_) => {
+                return result;
             }
+            _ => (),
         }
     }
     result
 }
 
-fn eval_prefix_expression(operator: &str, right: Object) -> Option<Object> {
+fn eval_prefix_expression(operator: &str, right: Object) -> Result<Object, EvalError> {
     match operator {
         "!" => eval_bang_operator_expression(right),
         "-" => eval_minus_operator_expression(right),
-        _ => Some(Object::Error(format!(
-            "unknown operator: {}{}",
-            operator,
-            right.object_type()
-        ))),
+        _ => Err(EvalError {
+            message: format!("unknown operator: {}{}", operator, right.object_type()),
+        }),
     }
 }
 
-fn eval_minus_operator_expression(right: Object) -> Option<Object> {
+fn eval_minus_operator_expression(right: Object) -> Result<Object, EvalError> {
     match right {
-        Object::Integer(i) => Some(Object::Integer(-i)),
-        _ => Some(Object::Error(format!(
-            "unknown operator: -{}",
-            right.object_type()
-        ))),
+        Object::Integer(i) => Ok(Object::Integer(-i)),
+        _ => Err(EvalError {
+            message: format!("unknown operator: -{}", right.object_type()),
+        }),
     }
 }
 
-fn eval_bang_operator_expression(right: Object) -> Option<Object> {
+fn eval_bang_operator_expression(right: Object) -> Result<Object, EvalError> {
     match right {
-        Object::Boolean(b) => Some(Object::Boolean(!b)),
-        Object::Null => Some(Object::Boolean(true)),
-        _ => Some(Object::Boolean(false)),
+        Object::Boolean(b) => Ok(Object::Boolean(!b)),
+        Object::Null => Ok(Object::Boolean(true)),
+        _ => Ok(Object::Boolean(false)),
     }
 }
 
 fn eval_infix_expression(
     operator: &str,
-    left: Option<Object>,
-    right: Option<Object>,
-) -> Option<Object> {
+    left: &Object,
+    right: &Object,
+) -> Result<Object, EvalError> {
     match (left.clone(), right.clone()) {
-        (Some(Object::Integer(left)), Some(Object::Integer(right))) => {
+        (Object::Integer(left), Object::Integer(right)) => {
             eval_integer_infix_expression(operator, left, right)
         }
-        (Some(Object::Boolean(left)), Some(Object::Boolean(right))) => {
+        (Object::Boolean(left), Object::Boolean(right)) => {
             eval_boolean_infix_expression(operator, left, right)
         }
 
-        (Some(Object::String(left)), Some(Object::String(right))) => {
+        (Object::String(left), Object::String(right)) => {
             eval_string_infix_expression(operator, left, right)
         }
-        (Some(left), Some(right)) => {
+        (left, right) => {
             if left.object_type() != right.object_type() {
-                Some(Object::Error(format!(
-                    "type mismatch: {} {} {}",
-                    left.object_type(),
-                    operator,
-                    right.object_type()
-                )))
+                Err(EvalError {
+                    message: format!(
+                        "type mismatch: {} {} {}",
+                        left.object_type(),
+                        operator,
+                        right.object_type()
+                    ),
+                })
             } else {
-                Some(Object::Error(format!(
-                    "unknown operand: {} {} {}",
-                    left.object_type(),
-                    operator,
-                    right.object_type()
-                )))
+                Err(EvalError {
+                    message: format!(
+                        "unknown operand: {} {} {}",
+                        left.object_type(),
+                        operator,
+                        right.object_type()
+                    ),
+                })
             }
         }
-        _ => Some(Object::Error(format!(
-            "invalid operand: {:?} {} {:?}",
-            left, operator, right
-        ))),
     }
 }
 
-fn eval_string_infix_expression(operator: &str, left: String, right: String) -> Option<Object> {
+fn eval_string_infix_expression(
+    operator: &str,
+    left: String,
+    right: String,
+) -> Result<Object, EvalError> {
     match operator {
-        "+" => Some(Object::String(left + &right)),
-        _ => Some(Object::Error(format!(
-            "unknown operator: STRING {} STRING",
-            operator
-        ))),
+        "+" => Ok(Object::String(left + &right)),
+        _ => Err(EvalError {
+            message: format!("unknown operator: STRING {} STRING", operator),
+        }),
     }
 }
 
-fn eval_integer_infix_expression(operator: &str, left: i64, right: i64) -> Option<Object> {
+fn eval_integer_infix_expression(
+    operator: &str,
+    left: i64,
+    right: i64,
+) -> Result<Object, EvalError> {
     match operator {
-        "+" => Some(Object::Integer(left + right)),
-        "-" => Some(Object::Integer(left - right)),
-        "*" => Some(Object::Integer(left * right)),
-        "/" => Some(Object::Integer(left / right)),
-        "<" => Some(Object::Boolean(left < right)),
-        ">" => Some(Object::Boolean(left > right)),
-        "==" => Some(Object::Boolean(left == right)),
-        "!=" => Some(Object::Boolean(left != right)),
-        _ => Some(Object::Error(format!(
-            "unknown operator: {} {} {}",
-            left, operator, right
-        ))),
+        "+" => Ok(Object::Integer(left + right)),
+        "-" => Ok(Object::Integer(left - right)),
+        "*" => Ok(Object::Integer(left * right)),
+        "/" => Ok(Object::Integer(left / right)),
+        "<" => Ok(Object::Boolean(left < right)),
+        ">" => Ok(Object::Boolean(left > right)),
+        "==" => Ok(Object::Boolean(left == right)),
+        "!=" => Ok(Object::Boolean(left != right)),
+        _ => Err(EvalError {
+            message: format!("unknown operator: {} {} {}", left, operator, right),
+        }),
     }
 }
 
-fn eval_boolean_infix_expression(operator: &str, left: bool, right: bool) -> Option<Object> {
+fn eval_boolean_infix_expression(
+    operator: &str,
+    left: bool,
+    right: bool,
+) -> Result<Object, EvalError> {
     match operator {
-        "==" => Some(Object::Boolean(left == right)),
-        "!=" => Some(Object::Boolean(left != right)),
-        _ => Some(Object::Error(format!(
-            "unknown operator: BOOLEAN {} BOOLEAN",
-            operator
-        ))),
+        "==" => Ok(Object::Boolean(left == right)),
+        "!=" => Ok(Object::Boolean(left != right)),
+        _ => Err(EvalError {
+            message: format!("unknown operator: BOOLEAN {} BOOLEAN", operator),
+        }),
     }
 }
 
-fn eval_index_expression(left: Option<Object>, index: Option<Object>) -> Option<Object> {
+fn eval_index_expression(left: &Object, index: &Object) -> Result<Object, EvalError> {
     match (left.clone(), index.clone()) {
-        (Some(Object::Array(array)), Some(Object::Integer(i))) => {
-            eval_array_index_expression(array, i)
-        }
-        _ => Some(Object::Error(format!(
-            "index operator not supported: {:?}",
-            left
-        ))),
+        (Object::Array(array), Object::Integer(i)) => eval_array_index_expression(array, i),
+        _ => Err(EvalError {
+            message: format!("index operator not supported: {:?}", left),
+        }),
     }
 }
 
-fn eval_array_index_expression(array: Array, index: i64) -> Option<Object> {
+fn eval_array_index_expression(array: Array, index: i64) -> Result<Object, EvalError> {
     if index < 0 || index >= array.elements.len() as i64 {
-        return Some(Object::Null);
+        return Ok(Object::Null);
     }
-    Some(array.elements[index as usize].clone())
+    Ok(array.elements[index as usize].clone())
 }
 
 #[cfg(test)]
@@ -400,7 +382,7 @@ mod tests {
         ];
 
         for tt in tests {
-            let Some(evaluated) = test_eval(tt.0) else {
+            let Ok(evaluated) = test_eval(tt.0) else {
                 panic!("test_eval returned None");
             };
             test_integer_object(&evaluated, tt.1);
@@ -433,7 +415,7 @@ mod tests {
         ];
 
         for tt in tests {
-            let Some(evaluated) = test_eval(tt.0) else {
+            let Ok(evaluated) = test_eval(tt.0) else {
                 panic!("test_eval returned None");
             };
 
@@ -453,7 +435,7 @@ mod tests {
         ];
 
         for tt in tests {
-            let Some(evaluated) = test_eval(tt.0) else {
+            let Ok(evaluated) = test_eval(tt.0) else {
                 panic!("test_eval returned None");
             };
 
@@ -476,12 +458,12 @@ mod tests {
 
         for tt in tests {
             match test_eval(tt.0) {
-                Some(evaluated) => match tt.1 {
+                Ok(evaluated) => match tt.1 {
                     IntOrUnit::Int(i64) => test_integer_object(&evaluated, i64),
                     IntOrUnit::Unit => test_null_object(&evaluated),
                     _ => panic!("test_eval returned None"),
                 },
-                None => match tt.1 {
+                Err(_) => match tt.1 {
                     IntOrUnit::Int(_) => panic!("test_eval returned None"),
                     IntOrUnit::Unit => (),
                     _ => panic!("test_eval returned None"),
@@ -501,11 +483,13 @@ mod tests {
             ("if (10 < 1) { return 10; } else { return 1; }", 1),
             ("if (10 > 1) { if (10 > 1) { return 10; } return 1; }", 10),
         ];
+        tracing_subscriber::fmt().init();
 
         for tt in tests {
-            let Some(evaluated) = test_eval(tt.0) else {
+            let Ok(evaluated) = test_eval(tt.0) else {
                 panic!("test_eval returned None");
             };
+            tracing::info!("evaluated: {:?}", evaluated);
 
             test_integer_object(&evaluated, tt.1);
         }
@@ -513,6 +497,7 @@ mod tests {
 
     #[test]
     fn test_error_handling() {
+        tracing_subscriber::fmt().init();
         let tests = [
             ("5 + true;", "type mismatch: INTEGER + BOOLEAN"),
             ("5 + true; 5;", "type mismatch: INTEGER + BOOLEAN"),
@@ -532,12 +517,10 @@ mod tests {
         ];
 
         for tt in tests {
-            match test_eval(tt.0) {
-                Some(evaluated) => match evaluated {
-                    Object::Error(e) => assert_eq!(e, tt.1),
-                    _ => panic!("no error object returned."),
-                },
-                None => panic!("test_eval returned None"),
+            let result = test_eval(tt.0);
+            match result {
+                Err(e) => assert_eq!(e.message, tt.1),
+                _ => panic!("test_eval returned None"),
             }
         }
     }
@@ -553,7 +536,7 @@ mod tests {
         ];
 
         for tt in tests {
-            let Some(evaluated) = test_eval(tt.0) else {
+            let Ok(evaluated) = test_eval(tt.0) else {
                 panic!("test_eval returned None");
             };
 
@@ -564,7 +547,7 @@ mod tests {
     #[test]
     fn test_function_object() {
         let input = "fn(x) { x + 2; };";
-        let Some(evaluated) = test_eval(input) else {
+        let Ok(evaluated) = test_eval(input) else {
             panic!("test_eval returned None");
         };
         match evaluated {
@@ -589,7 +572,7 @@ mod tests {
         ];
 
         for tt in tests {
-            let Some(evaluated) = test_eval(tt.0) else {
+            let Ok(evaluated) = test_eval(tt.0) else {
                 panic!("test_eval returned None");
             };
             test_integer_object(&evaluated, tt.1);
@@ -612,7 +595,7 @@ mod tests {
     #[test]
     fn test_string_literal() {
         let input = r#""hello world""#;
-        let Some(evaluated) = test_eval(input) else {
+        let Ok(evaluated) = test_eval(input) else {
             panic!("test_eval returned None");
         };
 
@@ -627,7 +610,7 @@ mod tests {
     fn test_string_concatenation() {
         let input = r#""hello" + " " + "world""#;
 
-        let Some(evaluated) = test_eval(input) else {
+        let Ok(evaluated) = test_eval(input) else {
             panic!("test_eval returned None");
         };
 
@@ -681,13 +664,13 @@ mod tests {
             match tt.1 {
                 Ok(i) => match i {
                     IntOrUnit::Int(i) => {
-                        let Some(Object::Integer(val)) = evaluated else {
+                        let Ok(Object::Integer(val)) = evaluated else {
                             panic!("object is not Integer. got={:?}", &evaluated);
                         };
                         assert_eq!(val, i);
                     }
                     IntOrUnit::Array(arr) => {
-                        let Some(Object::Array(array)) = evaluated else {
+                        let Ok(Object::Array(array)) = evaluated else {
                             panic!("object is not Array. got={:?}", &evaluated);
                         };
                         for (i, el) in arr.iter().enumerate() {
@@ -697,10 +680,10 @@ mod tests {
                     IntOrUnit::Unit => (),
                 },
                 Err(s) => {
-                    let Some(Object::Error(e)) = evaluated else {
+                    let Err(e) = evaluated else {
                         panic!("object is not Error. got={:?}", &evaluated);
                     };
-                    assert_eq!(e, s);
+                    assert_eq!(e.message, s);
                 }
             }
         }
@@ -709,7 +692,7 @@ mod tests {
     #[test]
     fn test_array_literal() {
         let input = "[1, 2 * 2, 3 + 3]";
-        let Some(evaluated) = test_eval(input) else {
+        let Ok(evaluated) = test_eval(input) else {
             panic!("test_eval returned None");
         };
 
@@ -747,12 +730,12 @@ mod tests {
 
         for tt in tests {
             match test_eval(tt.0) {
-                Some(evaluated) => match tt.1 {
+                Ok(evaluated) => match tt.1 {
                     IntOrUnit::Int(val) => test_integer_object(&evaluated, val),
                     IntOrUnit::Unit => test_null_object(&evaluated),
                     _ => panic!("test_eval returned None"),
                 },
-                None => match tt.1 {
+                Err(_) => match tt.1 {
                     IntOrUnit::Unit => (),
                     _ => panic!("test_eval returned None"),
                 },
@@ -760,14 +743,16 @@ mod tests {
         }
     }
 
-    fn test_eval(input: &str) -> Option<Object> {
+    fn test_eval(input: &str) -> Result<Object, EvalError> {
         let l = Lexer::new(input.to_string());
         let mut p = Parser::new(l);
         let result = p.parse_program();
         let env = &mut Environment::new();
         match result {
             Ok(program) => eval(&program, env),
-            Err(e) => panic!("parser error: {:?}", e),
+            Err(e) => Err(EvalError {
+                message: e.errors.join(", ").to_string(),
+            }),
         }
     }
 

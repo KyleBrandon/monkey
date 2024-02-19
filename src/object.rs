@@ -8,10 +8,11 @@ use itertools::Itertools;
 
 use crate::{
     environment::Environment,
+    error::EvalError,
     node::{Identifier, Node},
 };
 
-type BulitinFunction = fn(&[Object]) -> Option<Object>;
+type BulitinFunction = fn(&[Object]) -> Result<Object, EvalError>;
 
 #[derive(Debug, PartialEq)]
 pub enum ObjectType {
@@ -19,7 +20,6 @@ pub enum ObjectType {
     Boolean,
     Null,
     ReturnValue,
-    Error,
     Function,
     String,
     Builtin,
@@ -36,7 +36,6 @@ impl Display for ObjectType {
                 ObjectType::Boolean => "BOOLEAN",
                 ObjectType::Null => "NULL",
                 ObjectType::ReturnValue => "RETURN_VALUE",
-                ObjectType::Error => "ERROR",
                 ObjectType::Function => "FUNCTION",
                 ObjectType::String => "STRING",
                 ObjectType::Builtin => "BULITIN",
@@ -52,7 +51,6 @@ pub enum Object {
     Boolean(bool),
     Null,
     ReturnValue(Box<Object>),
-    Error(String),
     Function(Function),
     String(String),
     Builtin(BulitinFunction),
@@ -66,7 +64,6 @@ impl Object {
             Object::Boolean(_) => ObjectType::Boolean,
             Object::Null => ObjectType::Null,
             Object::ReturnValue(_) => ObjectType::ReturnValue,
-            Object::Error(_) => ObjectType::Error,
             Object::Function(_) => ObjectType::Function,
             Object::String(_) => ObjectType::String,
             Object::Builtin(_) => ObjectType::Builtin,
@@ -80,7 +77,6 @@ impl Object {
             Object::Boolean(b) => b.to_string(),
             Object::Null => "null".to_string(),
             Object::ReturnValue(obj) => obj.inspect(),
-            Object::Error(e) => e.to_string(),
             Object::Function(f) => {
                 let mut buffer = String::new();
 

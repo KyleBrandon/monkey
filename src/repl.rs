@@ -24,7 +24,7 @@ pub fn start_repl() {
 
             match result {
                 Ok(program) => {
-                    let Some(evaluated) = eval::eval(&program, &mut env) else {
+                    let Ok(evaluated) = eval::eval(&program, &mut env) else {
                         println!("Error evaluating program");
                         continue;
                     };
